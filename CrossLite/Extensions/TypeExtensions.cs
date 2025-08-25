@@ -2,6 +2,13 @@
 
 namespace CrossLite
 {
+    /// <summary>
+    /// Provides extension methods for working with <see cref="Type"/> objects,  including methods to determine if a
+    /// type is numeric or an integer type.
+    /// </summary>
+    /// <remarks>These extension methods are designed to simplify type analysis, particularly  for scenarios
+    /// where numeric or integer type checks are required. Nullable numeric  types are treated as numeric, while <see
+    /// cref="bool"/> is not considered numeric.</remarks>
     internal static class TypeExtensions
     {
         /// <summary>

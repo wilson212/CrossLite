@@ -1,5 +1,5 @@
-﻿using System.Collections.Generic;
-using System.Data.SQLite;
+﻿using Microsoft.Data.Sqlite;
+using System.Collections.Generic;
 
 namespace CrossLite.QueryBuilder
 {
@@ -39,6 +39,6 @@ namespace CrossLite.QueryBuilder
         /// Builds the current set of Clauses and returns the full statement as a string.
         /// </summary>
         /// <param name="parameters">A list that will be filled with the statements parameters</param>
-        string BuildStatement(List<SQLiteParameter> parameters);
+        string BuildStatement(List<SqliteParameter> parameters);
     }
 }

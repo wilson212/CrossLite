@@ -1,6 +1,6 @@
-﻿using System;
+﻿using Microsoft.Data.Sqlite;
+using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.Linq;
 using System.Text;
 
@@ -381,7 +381,7 @@ namespace CrossLite.QueryBuilder
 
         /// <summary>
         /// Assigns a column identifier an alias name for this query.
-        /// Columns will be aliased by the order they specified in the
+        /// DatabaseColumns will be aliased by the order they specified in the
         /// last Select*() method.
         /// </summary>
         /// <param name="names"></param>
@@ -847,11 +847,11 @@ namespace CrossLite.QueryBuilder
 
         /// <summary>
         /// Builds the query string with the current SQL Statement, and
-        /// returns the SQLiteCommand to be executed. All WHERE and HAVING paramenters
+        /// returns the SqliteCommand to be executed. All WHERE and HAVING paramenters
         /// are propery escaped, making this command SQL Injection safe.
         /// </summary>
         /// <returns></returns>
-        public SQLiteCommand BuildCommand() => BuildQuery(true) as SQLiteCommand;
+        public SqliteCommand BuildCommand() => BuildQuery(true) as SqliteCommand;
 
         /// <summary>
         /// Builds the query string or SQLiteCommand
@@ -959,7 +959,7 @@ namespace CrossLite.QueryBuilder
             }
 
             // Append Where Statement
-            List<SQLiteParameter> parameters = new List<SQLiteParameter>();
+            List<SqliteParameter> parameters = new List<SqliteParameter>();
             if (WhereStatement.HasClause)
             {
                 if (buildCommand)
@@ -1003,7 +1003,7 @@ namespace CrossLite.QueryBuilder
             query.AppendIf(Offset > 0, " OFFSET " + Offset);
 
             // Create Command
-            SQLiteCommand command = null;
+            SqliteCommand command = null;
             if (buildCommand)
             {
                 command = Context.CreateCommand(query.ToString());
@@ -1013,18 +1013,6 @@ namespace CrossLite.QueryBuilder
             // Return Result
             return (buildCommand) ? command as object : query.ToString();
         }
-
-        /// <summary>
-        /// Verifies that all SQL queries associated with the query builder can be
-        /// successfully compiled. A <see cref="SQLiteException"/> will be raised if
-        /// any errors occur.
-        /// </summary>
-        /// <remarks>
-        /// This method builds a command and uses the already made VerifyOnly method.
-        /// If you plan to also execute the query, might as well call BuildCommand()
-        /// and use the VerifyOnly() method on the command itself.
-        /// </remarks>
-        public void VerifyQuery() => BuildCommand().VerifyOnly();
 
         /// <summary>
         /// Executes the built SQL statement on the SQLite database connection that was passed
@@ -1053,7 +1041,7 @@ namespace CrossLite.QueryBuilder
         /// SQL Injection safe.
         /// </summary>
         /// <returns></returns>
-        public IEnumerable<T> ExecuteQuery<T>() where T : class
+        public IEnumerable<T> ExecuteQuery<T>() where T : EntityBase, new()
         {
             return Context.ExecuteReader<T>(BuildCommand());
         }

@@ -1,13 +1,13 @@
-﻿using System;
-using System.Data.SQLite;
+﻿using CrossLite;
+using CrossLite.CodeFirst;
+using CrossLite.QueryBuilder;
+using Microsoft.Data.Sqlite;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
-using CrossLite;
-using CrossLite.CodeFirst;
-using CrossLite.QueryBuilder;
 
 namespace CrossLiteTester
 {
@@ -22,7 +22,7 @@ namespace CrossLiteTester
             string database = Path.Combine(Application.StartupPath, "test.db");
 
             // Connect to the database
-            var builder = new SQLiteConnectionStringBuilder() { DataSource = database, ForeignKeys = true };
+            var builder = new SqliteConnectionStringBuilder() { DataSource = database, ForeignKeys = true };
             using (TestContext db = new TestContext(builder.ToString()))
             {
                 // Run test 1
@@ -54,28 +54,34 @@ namespace CrossLiteTester
                     Console.Write("Adding dummy data...");
 
                     // Insert some dummy data
-                    Account entity = new Account() { Name = "Steve" };
+                    var entity = db.CreateEntity<Account>();
+                    entity.Name = "Steve";
                     db.Users.Add(entity);
 
-                    Privilege ent = new Privilege() { Name = "Test" };
+                    var ent = db.CreateEntity<Privilege>();
+                    ent.Name = "Test" ;
                     db.Privs.Add(ent);
 
-                    UserPrivilege up = new UserPrivilege()
-                    {
-                        PrivilegeId = ent.Id,
-                        UserId = entity.Id
-                    };
+                    var up = db.CreateEntity<UserPrivilege>();
+                    up.Privilege = ent;
+                    up.Account = entity;
                     db.UserPrivileges.Add(up);
 
                     Console.WriteLine("Success!");
                     Console.WriteLine();
-                    Console.Write("Testing readers...");
+                    Console.WriteLine("Testing readers...");
 
                     // Test fetching for Fkeys
                     foreach (UserPrivilege priv in entity.Privilages)
                     {
-                        var temp = priv.Privilege.Fetch();
+                        var temp = priv.Privilege;
+                        Console.WriteLine($"Fetched Privilege '{temp.Name}' for User '{entity.Name}'");
                     }
+
+                    Console.WriteLine("Success!");
+                    Console.WriteLine();
+                    Console.Write("Fetching database entities...");
+                    Console.WriteLine();
 
                     // Check if entity inserted correctly
                     if (!db.Users.Contains(entity))
@@ -85,7 +91,8 @@ namespace CrossLiteTester
                     try
                     {
                         // Test Row ID alias column
-                        entity = new Account() { Name = "Sally" };
+                        entity = db.CreateEntity<Account>();
+                        entity.Name = "Sally";
                         db.Users.Add(entity);
                         var sally = db.Users.Select(x => x).Where(x => x.Id == 2).First();
 
@@ -105,6 +112,7 @@ namespace CrossLiteTester
                         int num = query.From("test").SelectCount().ExecuteScalar<int>();
                         Console.WriteLine("Success!");
                         Console.WriteLine($"There are {num} Records!");
+                        Console.WriteLine();
                     }
                     catch (Exception e)
                     {
@@ -114,11 +122,23 @@ namespace CrossLiteTester
                     }
 
                     // Test an update
+                    Console.WriteLine("Updating entity name to Joey..."); 
                     entity.Name = "Joey";
                     db.Users.Update(entity);
 
                     // Test read
                     entity = db.Users.Where(x => x.Name == "Joey").First();
+                    if (entity == null)
+                    {
+                        Console.WriteLine("Update Failed!!! Name is not Joey");
+                        Console.WriteLine();
+                    }
+                    else
+                    {
+
+                        Console.WriteLine("Update Success!");
+                        Console.WriteLine();
+                    }
 
                     // Delete test
                     db.Users.Remove(entity);
@@ -135,7 +155,7 @@ namespace CrossLiteTester
             }
         }
 
-        private static void RunQueryBuilderTest(CrossLite.SQLiteContext context)
+        private static void RunQueryBuilderTest(SQLiteContext context)
         {
             // Quote keywords only with accents
             context.IdentifierQuoteKind = IdentifierQuoteKind.Accents;
@@ -159,7 +179,7 @@ namespace CrossLiteTester
                 .Where("Type").Equals(AccountType.Admin).And("Id").GreaterThan(6).Or("plan").NotEqualTo(3);
             var queryString = query.BuildQuery();
 
-            // Log query builder time (14ms for me on an i7-950)
+            // Log query builder time (10ms for me on an i7-14700KF)
             long time = timer.ElapsedMilliseconds;
 
             Console.WriteLine("Complicated QueryBuilder Test:");
@@ -168,7 +188,7 @@ namespace CrossLiteTester
             Console.WriteLine($"Query generated in {time}ms");
         }
 
-        private static void RunQueryBuilderTests(CrossLite.SQLiteContext context)
+        private static void RunQueryBuilderTests(SQLiteContext context)
         {
             // No quotes
             context.IdentifierQuoteMode = IdentifierQuoteMode.None;
@@ -193,6 +213,7 @@ namespace CrossLiteTester
 
             // Log time
             long time1 = timer.ElapsedMilliseconds;
+            Console.WriteLine("Plain Query:     {0}ms   ({1}ms per query)", time1, Math.Round(time1 / timesToRun, 8));
             timer.Restart();
 
             for (double i = timesToRun; i > 0; i--)
@@ -205,8 +226,7 @@ namespace CrossLiteTester
 
             // Log Time
             long time2 = timer.ElapsedMilliseconds;
-            Console.WriteLine("Plain Query:     {0}ms   ({1}ms per query)", time1, Math.Round(time1 / timesToRun, 6));
-            Console.WriteLine("QueryBuilder:    {0}ms   ({1}ms per query)", time2, Math.Round(time2 / timesToRun, 6));
+            Console.WriteLine("QueryBuilder:    {0}ms   ({1}ms per query)", time2, Math.Round(time2 / timesToRun, 8));
         }
     }
 }

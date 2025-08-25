@@ -1,6 +1,6 @@
-﻿using System;
+using Microsoft.Data.Sqlite;
+using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.Text;
 
 namespace CrossLite.QueryBuilder
@@ -152,7 +152,7 @@ namespace CrossLite.QueryBuilder
         /// are propery escaped, making this command SQL Injection safe.
         /// </summary>
         /// <returns></returns>
-        public override SQLiteCommand BuildCommand() => BuildQuery(true) as SQLiteCommand;
+        public override SqliteCommand BuildCommand() => BuildQuery(true) as SqliteCommand;
 
         /// <summary>
         /// Builds the query string or DbCommand
@@ -175,7 +175,7 @@ namespace CrossLite.QueryBuilder
 
             // Start Query
             var query = new StringBuilder($"UPDATE {Context.QuoteIdentifier(Table)} SET ", 256);
-            var parameters = new List<SQLiteParameter>();
+            var parameters = new List<SqliteParameter>();
 
             // Add Fields
             bool first = true;
@@ -189,7 +189,7 @@ namespace CrossLite.QueryBuilder
                 if (buildCommand && column.Value.Value != null && column.Value.Value != DBNull.Value && !(column.Value.Value is SqlLiteral))
                 {
                     // Create param for value
-                    SQLiteParameter param = Context.CreateParameter();
+                    var param = Context.CreateParameter();
                     param.ParameterName = "@P" + parameters.Count;
                     param.Value = column.Value.Value;
 
@@ -218,7 +218,7 @@ namespace CrossLite.QueryBuilder
                 query.Append(" WHERE " + WhereStatement.BuildStatement(parameters));
 
             // Create Command
-            SQLiteCommand command = null;
+            SqliteCommand command = null;
             if (buildCommand)
             {
                 command = Context.CreateCommand(query.ToString());
@@ -230,24 +230,12 @@ namespace CrossLite.QueryBuilder
         }
 
         /// <summary>
-        /// Verifies that all SQL queries associated with the query builder can be
-        /// successfully compiled. A <see cref="SQLiteException"/> will be raised if
-        /// any errors occur.
-        /// </summary>
-        /// <remarks>
-        /// This method builds a command and uses the already made VerifyOnly method.
-        /// If you plan to also execute the query, might as well call BuildCommand()
-        /// and use the VerifyOnly() method on the command itself.
-        /// </remarks>
-        public void VerifyQuery() => BuildCommand().VerifyOnly();
-
-        /// <summary>
         /// Executes the command against the database. The database driver must be set!
         /// </summary>
         /// <returns></returns>
         public override int Execute()
         {
-            using (SQLiteCommand command = BuildCommand())
+            using (SqliteCommand command = BuildCommand())
                 return command.ExecuteNonQuery();
         }
 

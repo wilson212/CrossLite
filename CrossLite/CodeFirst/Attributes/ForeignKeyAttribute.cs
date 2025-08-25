@@ -15,18 +15,6 @@ namespace CrossLite.CodeFirst
         public string[] Attributes { get; internal set; }
 
         /// <summary>
-        /// Gets the <see cref="ReferentialIntegrity"/> for this key restraint 
-        /// when a row in the parent table is deleted
-        /// </summary>
-        public ReferentialIntegrity OnDelete { get; set; } = ReferentialIntegrity.NoAction;
-
-        /// <summary>
-        /// Gets the <see cref="ReferentialIntegrity"/> for this key restraint 
-        /// when a row in the parent table is updated
-        /// </summary>
-        public ReferentialIntegrity OnUpdate { get; set; } = ReferentialIntegrity.NoAction;
-
-        /// <summary>
         /// Creates a single foreign key restraint between the attached Entity
         /// attribute, and the specifed parent Entity attribute
         /// </summary>

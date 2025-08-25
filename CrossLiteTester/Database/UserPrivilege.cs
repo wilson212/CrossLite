@@ -3,31 +3,32 @@ using CrossLite.CodeFirst;
 
 namespace CrossLiteTester
 {
-    public class UserPrivilege
+    [Table]
+    public class UserPrivilege : EntityBase
     {
         [Column("pid"), PrimaryKey]
-        public int PrivilegeId { get; set; }
+        public virtual int PrivilegeId { get; set; }
 
         [Column("uid"), PrimaryKey]
-        public int UserId { get; set; }
+        public virtual int UserId { get; set; }
 
         [Column("has_privilege")]
-        public bool HasPrivilege { get; set; }
+        public virtual bool HasPrivilege { get; set; }
 
         /// <summary>
         /// Using "Fetch()" on this lazy loading class will retrieve
         /// the Account object that this UserPriv references
         /// </summary>
-        [InverseKey("Id")]
-        [ForeignKey("uid", OnDelete = ReferentialIntegrity.Cascade)]
-        public virtual ForeignKey<Account> Account { get; set; }
+        [ForeignKey("uid")]
+        [References("Id", OnDelete = ReferentialIntegrity.Cascade)]
+        public virtual Account Account { get; set; }
 
         /// <summary>
         /// Using "Fetch()" on this lazy loading class will retrieve
         /// the Privilege object that this UserPriv references
         /// </summary>
-        [InverseKey("id")]
-        [ForeignKey("pid", OnDelete = ReferentialIntegrity.Cascade)]
-        public virtual ForeignKey<Privilege> Privilege { get; set; }
+        [ForeignKey("pid")]   
+        [References("id", OnDelete = ReferentialIntegrity.Cascade)]   
+        public virtual Privilege Privilege { get; set; }
     }
 }

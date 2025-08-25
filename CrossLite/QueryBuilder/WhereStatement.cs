@@ -1,6 +1,6 @@
-﻿using System;
+﻿using Microsoft.Data.Sqlite;
+using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.Linq;
 using System.Text;
 
@@ -185,9 +185,9 @@ namespace CrossLite.QueryBuilder
         /// </summary>
         /// <param name="parameters">A list of current query parameters</param>
         /// <returns></returns>
-        public string BuildStatement(out List<SQLiteParameter> parameters)
+        public string BuildStatement(out List<SqliteParameter> parameters)
         {
-            parameters = new List<SQLiteParameter>();
+            parameters = new List<SqliteParameter>();
             return BuildStatement(parameters);
         }
 
@@ -196,7 +196,7 @@ namespace CrossLite.QueryBuilder
         /// </summary>
         /// <param name="parameters">A list that will be filled with the statements parameters</param>
         /// <returns></returns>
-        public string BuildStatement(List<SQLiteParameter> parameters)
+        public string BuildStatement(List<SqliteParameter> parameters)
         {
             StringBuilder builder = new StringBuilder();
             int paramsCounter = parameters?.Count ?? 0;

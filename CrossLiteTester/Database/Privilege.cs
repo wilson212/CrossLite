@@ -3,13 +3,14 @@ using CrossLite.CodeFirst;
 
 namespace CrossLiteTester
 {
-    public class Privilege
+    [Table]
+    public class Privilege : EntityBase
     {
         [PrimaryKey]
         [Column(Name: "id")]
-        public int Id { get; set; }
+        public virtual int Id { get; set; }
 
         [Column("name"), Required, Unique]
-        public string Name { get; set; }   
+        public virtual string Name { get; set; }   
     }
 }

@@ -1,6 +1,6 @@
-﻿using System;
+﻿using Microsoft.Data.Sqlite;
+using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.Reflection;
 
 namespace CrossLite.QueryBuilder
@@ -14,12 +14,17 @@ namespace CrossLite.QueryBuilder
         /// <summary>
         /// The prepared SQLite command
         /// </summary>
-        private SQLiteCommand Command { get; set; }
+        private SqliteCommand Command { get; set; }
 
         /// <summary>
         /// A list of named parameters (ColName => Parameter) to be used in the SQLiteCommand
         /// </summary>
-        private Dictionary<string, SQLiteParameter> Params { get; set; }
+        private Dictionary<string, SqliteParameter> Params { get; set; }
+
+        /// <summary>
+        /// Gets the number of set parameters
+        /// </summary>
+        public int ParamCount => Params?.Count ?? 0;
 
         /// <summary>
         /// Indicates whether this object has been disposed or not.
@@ -33,11 +38,11 @@ namespace CrossLite.QueryBuilder
         /// An SQL command shall be passed here with the <see cref="SQLiteCommand.CommandText"/> already set.
         /// All current parameters will be cleared from this command (see <see cref="SetParam(string, object)"/>).
         /// </param>
-        public PreparedNonQuery(SQLiteCommand command)
+        public PreparedNonQuery(SqliteCommand command)
         {
             Command = command;
             Command.Parameters.Clear();
-            Params = new Dictionary<string, SQLiteParameter>();
+            Params = new Dictionary<string, SqliteParameter>();
         }
 
         ~PreparedNonQuery()
@@ -54,14 +59,14 @@ namespace CrossLite.QueryBuilder
         /// <returns></returns>
         public PreparedNonQuery SetParam(string name, object value)
         {
-            SQLiteParameter param;
+            SqliteParameter param;
             if (Params.TryGetValue(name, out param))
             {
                 param.Value = value;
             }
             else
             {
-                param = new SQLiteParameter();
+                param = new SqliteParameter();
                 param.ParameterName = name;
                 param.Value = value;
                 Params.Add(name, param);
@@ -72,16 +77,16 @@ namespace CrossLite.QueryBuilder
         }
 
         /// <summary>
-        /// Sets the parameters of the <see cref="SQLiteCommand"/> based on the 
+        /// Sets the parameters of the <see cref="SqliteCommand"/> based on the 
         /// <see cref="ColumnAttribute"/> property values of an entity
         /// </summary>
         /// <typeparam name="T"></typeparam>
         /// <param name="obj"></param>
         /// <param name="entityTable"></param>
-        public void SetParameters<T>(T obj, TableMapping entityTable) where T : class
+        public void SetParameters<T>(T obj, TableMapping entityTable) where T : EntityBase
         {
             // Generate the SQL
-            foreach (var attribute in entityTable.Columns)
+            foreach (var attribute in entityTable.DatabaseColumns)
             {
                 // Keys go in the WHERE statement, not the SET statement
                 PropertyInfo info = attribute.Value.Property;

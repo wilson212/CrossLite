@@ -26,14 +26,14 @@ namespace CrossLite.CodeFirst
         public Type ChildEntityType { get; protected set; }
 
         /// <summary>
-        /// The property name that contains the ForeignKey<> object
+        /// The property name that contains the ForeignEntityLoader<> object
         /// </summary>
         public string ChildPropertyName { get; protected set; }
 
         /// <summary>
         /// Gets the Parent entities attributes that are referenced in this foreign key
         /// </summary>
-        public InverseKeyAttribute InverseKey { get; protected set; }
+        public ReferencesAttribute Reference { get; protected set; }
 
         /// <summary>
         /// Gets the Child entities attributes that are referenced in this foreign key
@@ -52,25 +52,25 @@ namespace CrossLite.CodeFirst
             string childPropertyName, 
             Type parentType, 
             ForeignKeyAttribute foreignKey, 
-            InverseKeyAttribute inverseKey)
+            ReferencesAttribute inverseKey)
         {
             this.ForeignKey = foreignKey;
-            this.InverseKey = inverseKey;
+            this.Reference = inverseKey;
             this.ParentEntityType = parentType;
             this.ChildEntityType = child.EntityType;
             this.ChildPropertyName = childPropertyName;
 
             // Ensure the parent and child have the specified properties
             TableMapping parent = EntityCache.GetTableMap(parentType);
-            var invalid = inverseKey.Attributes.Except(parent.Columns.Keys);
+            var invalid = inverseKey.Attributes.Except(parent.DatabaseColumns.Keys);
             if (invalid.Count() > 0)
             {
                 throw new EntityException($"Parent Entity does not contain an attribute named \"{invalid.First()}\"");
             }
-            invalid = foreignKey.Attributes.Except(child.Columns.Keys);
+            invalid = foreignKey.Attributes.Except(child.DatabaseColumns.Keys);
             if (invalid.Count() > 0)
             {
-                throw new EntityException($"Child Entity does not contain an attribute named \"{invalid.First()}\"");
+                throw new EntityException($"Child Entity \"{ChildEntityType}\" does not contain an attribute named \"{invalid.First()}\"");
             }
         }
     }

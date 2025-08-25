@@ -3,7 +3,7 @@
 namespace CrossLite.CodeFirst
 {
     /// <summary>
-    /// Represents a Unique attribute value. Only used in CodeFirst table 
+    /// Represents a IsUnique attribute value. Only used in CodeFirst table 
     /// creation <see cref="SQLiteContext.CreateTable{TEntity}(bool)"/>
     /// </summary>
     [AttributeUsage(AttributeTargets.Property)]

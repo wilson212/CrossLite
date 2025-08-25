@@ -1,5 +1,5 @@
-﻿using System;
-using System.Data.SQLite;
+﻿using Microsoft.Data.Sqlite;
+using System;
 
 namespace CrossLite.QueryBuilder
 {
@@ -46,7 +46,7 @@ namespace CrossLite.QueryBuilder
         /// are propery escaped, making this command SQL Injection safe.
         /// </summary>
         /// <returns></returns>
-        public abstract SQLiteCommand BuildCommand();
+        public abstract SqliteCommand BuildCommand();
 
         /// <summary>
         /// Executes the built SQL statement on the Database connection that was passed

@@ -1,6 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
+using Microsoft.Data.Sqlite;
 using System.Text;
 
 namespace CrossLite.QueryBuilder
@@ -10,7 +10,7 @@ namespace CrossLite.QueryBuilder
     /// </summary>
     /// <remarks>
     /// By using the BuildCommand() method, all parameters in the WHERE and HAVING statements will 
-    /// be escaped by the underlaying SQLiteCommand object, making the Execute*() methods SQL injection 
+    /// be escaped by the underlaying SqliteCommand object, making the Execute*() methods SQL injection 
     /// safe.
     /// </remarks>
     public class InsertQueryBuilder : NonQueryBuilder, IDisposable
@@ -66,7 +66,7 @@ namespace CrossLite.QueryBuilder
         /// are propery escaped, making this command SQL Injection safe.
         /// </summary>
         /// <returns></returns>
-        public override SQLiteCommand BuildCommand() => BuildQuery(true) as SQLiteCommand;
+        public override SqliteCommand BuildCommand() => BuildQuery(true) as SqliteCommand;
 
         /// <summary>
         /// Builds the query string or DbCommand
@@ -90,7 +90,7 @@ namespace CrossLite.QueryBuilder
             // Start Query
             StringBuilder query = new StringBuilder($"INSERT INTO {Context.QuoteIdentifier(Table)} (", 256);
             StringBuilder values = new StringBuilder();
-            List<SQLiteParameter> parameters = new List<SQLiteParameter>();
+            List<SqliteParameter> parameters = new List<SqliteParameter>();
             bool first = true;
 
             // Add fields and values
@@ -102,14 +102,14 @@ namespace CrossLite.QueryBuilder
                     query.Append(", ");
                     values.Append(", ");
                 }
-                else 
+                else
                     first = false;
 
                 // If using a command, Convert values to Parameters
                 if (buildCommand && Item.Value != null && Item.Value != DBNull.Value && !(Item.Value is SqlLiteral))
                 {
                     // Create param for value
-                    SQLiteParameter Param = Context.CreateParameter();
+                    SqliteParameter Param = Context.CreateParameter();
                     Param.ParameterName = "@P" + parameters.Count;
                     Param.Value = Item.Value;
 
@@ -131,7 +131,7 @@ namespace CrossLite.QueryBuilder
             query.AppendFormat(") VALUES ({0})", values);
 
             // Create Command
-            SQLiteCommand command = null;
+            SqliteCommand command = null;
             if (buildCommand)
             {
                 command = Context.CreateCommand(query.ToString());
@@ -143,25 +143,13 @@ namespace CrossLite.QueryBuilder
         }
 
         /// <summary>
-        /// Verifies that all SQL queries associated with the query builder can be
-        /// successfully compiled. A <see cref="SQLiteException"/> will be raised if
-        /// any errors occur.
-        /// </summary>
-        /// <remarks>
-        /// This method builds a command and uses the already made VerifyOnly method.
-        /// If you plan to also execute the query, might as well call BuildCommand()
-        /// and use the VerifyOnly() method on the command itself.
-        /// </remarks>
-        public void VerifyQuery() => BuildCommand().VerifyOnly();
-
-        /// <summary>
         /// Executes the built SQL statement on the Database connection that was passed
         /// in the contructor. All WHERE paramenters are propery escaped, 
         /// making this command SQL Injection safe.
         /// </summary>
         public override int Execute()
         {
-            using (SQLiteCommand command = BuildCommand())
+            using (SqliteCommand command = BuildCommand())
                 return command.ExecuteNonQuery();
         }
 

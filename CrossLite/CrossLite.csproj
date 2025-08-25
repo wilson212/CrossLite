@@ -1,152 +1,46 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="14.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{19F0606E-4BDF-4E58-A722-4100C92F90C4}</ProjectGuid>
+    <TargetFramework>net8.0</TargetFramework>
     <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>CrossLite</RootNamespace>
-    <AssemblyName>CrossLite</AssemblyName>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
-    <TargetFrameworkProfile />
-    <NuGetPackageImportStamp>
-    </NuGetPackageImportStamp>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblyTitle>CrossLite</AssemblyTitle>
+    <Description>A tiny and fast SQLite ORM</Description>
+    <Company>Plexis Software</Company>
+    <Product>CrossLite</Product>
+    <Copyright>Copyright © Steven Wilson 2025</Copyright>
+    <Version>2.0.0</Version>
+    <AssemblyVersion>1.0.11.0</AssemblyVersion>
+    <FileVersion>2.0.0.12</FileVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
     <PlatformTarget>x86</PlatformTarget>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x86'">
-    <DebugSymbols>true</DebugSymbols>
-    <OutputPath>bin\x86\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <DebugType>full</DebugType>
     <PlatformTarget>x86</PlatformTarget>
-    <ErrorReport>prompt</ErrorReport>
+    <OutputPath>bin\x86\Debug\</OutputPath>
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x86'">
-    <OutputPath>bin\x86\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <Optimize>true</Optimize>
-    <DebugType>pdbonly</DebugType>
     <PlatformTarget>x86</PlatformTarget>
-    <ErrorReport>prompt</ErrorReport>
+    <OutputPath>bin\x86\Release\</OutputPath>
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
+    <PlatformTarget>x64</PlatformTarget>
+    <OutputPath>bin\x64\Debug\</OutputPath>
+    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
+    <PlatformTarget>x64</PlatformTarget>
+    <OutputPath>bin\x64\Release\</OutputPath>
+    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
   <ItemGroup>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Data.SQLite, Version=1.0.103.0, Culture=neutral, PublicKeyToken=db937bc2d44ff139, processorArchitecture=MSIL">
-      <HintPath>..\packages\System.Data.SQLite.Core.1.0.103\lib\net46\System.Data.SQLite.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="System.Xml.Linq" />
-    <Reference Include="System.Data.DataSetExtensions" />
-    <Reference Include="Microsoft.CSharp" />
-    <Reference Include="System.Data" />
-    <Reference Include="System.Net.Http" />
-    <Reference Include="System.Xml" />
+    <PackageReference Include="Castle.Core" Version="5.2.1" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.8" />
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="AttributeInfo.cs" />
-    <Compile Include="CodeFirst\Attributes\AutoIncrementAttribute.cs" />
-    <Compile Include="CodeFirst\Attributes\CollationAttribute.cs" />
-    <Compile Include="CodeFirst\Extensions\CodeFirstSQLite.cs" />
-    <Compile Include="Collections\Comparer2.cs" />
-    <Compile Include="Collections\DictionaryEnumerator.cs" />
-    <Compile Include="Collections\IOrderedDictionary.cs" />
-    <Compile Include="Collections\KeyedCollection2.cs" />
-    <Compile Include="Collections\OrderedDictionary.cs" />
-    <Compile Include="ColumnAttribute.cs" />
-    <Compile Include="CodeFirst\Attributes\CompositeUniqueAttribute.cs" />
-    <Compile Include="CodeFirst\Attributes\DefaultAttribute.cs" />
-    <Compile Include="CodeFirst\Attributes\ForeignKeyAttribute.cs" />
-    <Compile Include="CodeFirst\Attributes\InverseKeyAttribute.cs" />
-    <Compile Include="CodeFirst\Attributes\RequiredAttribute.cs" />
-    <Compile Include="CodeFirst\Attributes\PrimaryKeyAttribute.cs" />
-    <Compile Include="CodeFirst\Attributes\TableAttribute.cs" />
-    <Compile Include="CodeFirst\Attributes\UniqueAttribute.cs" />
-    <Compile Include="CodeFirst\ChildDbSet.cs" />
-    <Compile Include="DbConnectException.cs" />
-    <Compile Include="DbSet.cs" />
-    <Compile Include="EntityCache.cs" />
-    <Compile Include="EntityException.cs" />
-    <Compile Include="Extensions\DictionaryExt.cs" />
-    <Compile Include="IdentifierQuoteMode.cs" />
-    <Compile Include="Extensions\StringBuilderExtensions.cs" />
-    <Compile Include="Extensions\TypeExtensions.cs" />
-    <Compile Include="CodeFirst\ForeignKeyConstraint.cs" />
-    <Compile Include="IndexCreationOptions.cs" />
-    <Compile Include="IndexedColumn.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="QueryBuilder\DeleteQueryBuilder.cs" />
-    <Compile Include="QueryBuilder\Enums\AggregateFunction.cs" />
-    <Compile Include="QueryBuilder\Enums\UnionType.cs" />
-    <Compile Include="QueryBuilder\Enums\Comparison.cs" />
-    <Compile Include="QueryBuilder\Enums\JoinExpressionType.cs" />
-    <Compile Include="QueryBuilder\Enums\JoinType.cs" />
-    <Compile Include="QueryBuilder\Enums\LogicOperator.cs" />
-    <Compile Include="QueryBuilder\Enums\Sorting.cs" />
-    <Compile Include="QueryBuilder\Enums\ValueMode.cs" />
-    <Compile Include="QueryBuilder\IWhereStatement.cs" />
-    <Compile Include="QueryBuilder\JoinExpression.cs" />
-    <Compile Include="QueryBuilder\ColumnIdentifier.cs" />
-    <Compile Include="QueryBuilder\InsertQueryBuilder.cs" />
-    <Compile Include="QueryBuilder\JoinClause.cs" />
-    <Compile Include="QueryBuilder\NonQueryBuilder.cs" />
-    <Compile Include="QueryBuilder\OrderByClause.cs" />
-    <Compile Include="QueryBuilder\PreparedNonQuery.cs" />
-    <Compile Include="QueryBuilder\SelectQueryBuilder.cs" />
-    <Compile Include="QueryBuilder\SelectWhereStatement.cs" />
-    <Compile Include="QueryBuilder\SqlLiteral.cs" />
-    <Compile Include="QueryBuilder\TableIndentifier.cs" />
-    <Compile Include="QueryBuilder\UnionStatement.cs" />
-    <Compile Include="QueryBuilder\UpdateQueryBuilder.cs" />
-    <Compile Include="CodeFirst\ForeignKey.cs" />
-    <Compile Include="CodeFirst\ReferentialIntegrity.cs" />
-    <Compile Include="IdentifierQuoteKind.cs" />
-    <Compile Include="SQLiteContext.cs" />
-    <Compile Include="SQLiteDataType.cs" />
-    <Compile Include="CodeFirst\TableCreationOptions.cs" />
-    <Compile Include="TableMapping.cs" />
-    <Compile Include="QueryBuilder\SqlExpression.cs" />
-    <Compile Include="QueryBuilder\WhereClause.cs" />
-    <Compile Include="QueryBuilder\WhereStatement.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="packages.config" />
-  </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <Import Project="..\packages\System.Data.SQLite.Core.1.0.103\build\net46\System.Data.SQLite.Core.targets" Condition="Exists('..\packages\System.Data.SQLite.Core.1.0.103\build\net46\System.Data.SQLite.Core.targets')" />
-  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
-    <PropertyGroup>
-      <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
-    </PropertyGroup>
-    <Error Condition="!Exists('..\packages\System.Data.SQLite.Core.1.0.103\build\net46\System.Data.SQLite.Core.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\System.Data.SQLite.Core.1.0.103\build\net46\System.Data.SQLite.Core.targets'))" />
-  </Target>
-  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
-       Other similar extension points exist, see Microsoft.Common.targets.
-  <Target Name="BeforeBuild">
-  </Target>
-  <Target Name="AfterBuild">
-  </Target>
-  -->
 </Project>

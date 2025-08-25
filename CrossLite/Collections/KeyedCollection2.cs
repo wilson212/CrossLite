@@ -4,6 +4,15 @@ using System.Collections.ObjectModel;
 
 namespace CrossLite.Collections
 {
+    /// <summary>
+    /// Represents a collection of objects that are keyed by a specific property, with additional functionality for
+    /// sorting and searching.
+    /// </summary>
+    /// <remarks>This collection extends <see cref="KeyedCollection{TKey, TItem}"/> by providing additional
+    /// methods for sorting elements by their keys or values, as well as searching for elements by their keys. The key
+    /// for each element is determined by a delegate provided during construction.</remarks>
+    /// <typeparam name="TKey">The type of the key used to identify elements in the collection.</typeparam>
+    /// <typeparam name="TItem">The type of the elements in the collection.</typeparam>
     internal class KeyedCollection2<TKey, TItem> : KeyedCollection<TKey, TItem>
     {
         /// <summary>

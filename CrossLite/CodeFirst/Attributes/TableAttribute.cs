@@ -26,7 +26,7 @@ namespace CrossLite.CodeFirst
         public bool WithoutRowID { get; set; }
 
         /// <summary>
-        /// Gets or sets whether the <see cref="ForeignKey{TEntity}"/>
+        /// Gets or sets whether the <see cref="ForeignKeyLoader{TEntity}"/>
         /// relationships are built on instances of this table, when fetching
         /// or creating new Entities.
         /// </summary>
@@ -46,7 +46,7 @@ namespace CrossLite.CodeFirst
         /// Indicates whether this table has the 'WithoutRowId' clause.
         /// </param>
         /// <param name="BuildRelationships">
-        /// If true, the <see cref="ForeignKey{TEntity}"/> attributes will be filled after insertion,
+        /// If true, the <see cref="ForeignKeyLoader{TEntity}"/> attributes will be filled after insertion,
         /// otherwise they are left null. There is a slight performance hit when true.
         /// </param>
         public TableAttribute(string Name = null, bool WithoutRowID = false, bool BuildRelationships = true)

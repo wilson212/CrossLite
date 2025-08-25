@@ -1,8 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace CrossLite
 {
@@ -17,6 +13,8 @@ namespace CrossLite
         /// Gets the attribute (column) name in the database
         /// </summary>
         public string Name { get; set; }
+
+        public int Order { get; set; } = 99;
 
         public ColumnAttribute(string Name = null)
         {

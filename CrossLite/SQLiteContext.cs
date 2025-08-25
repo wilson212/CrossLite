@@ -1,13 +1,14 @@
-﻿using System;
+using Castle.DynamicProxy;
+using CrossLite.CodeFirst;
+using CrossLite.QueryBuilder;
+using Microsoft.Data.Sqlite;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
-using System.Data.SQLite;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
-using CrossLite.CodeFirst;
-using CrossLite.QueryBuilder;
 
 namespace CrossLite
 {
@@ -35,7 +36,12 @@ namespace CrossLite
         /// <summary>
         /// The database connection
         /// </summary>
-        public SQLiteConnection Connection { get; protected set; }
+        public SqliteConnection Connection { get; protected set; }
+
+        /// <summary>
+        /// Gets the current database transaction associated with the connection.
+        /// </summary>
+        public SqliteTransaction Transaction { get; protected set; }
 
         /// <summary>
         /// Indicates whether the disposed method was called
@@ -58,23 +64,37 @@ namespace CrossLite
         public string ConnectionString { get; private set; }
 
         /// <summary>
+        /// Gets the <see cref="ProxyGenerator"/> instance used to create dynamic proxy objects.
+        /// </summary>
+        /// <remarks>This property provides access to the underlying <see cref="ProxyGenerator"/>
+        /// instance,  which can be used to generate proxy types or instances for intercepting method calls.</remarks>
+        private ProxyGenerator Generator { get; set; } = new ProxyGenerator();
+
+        /// <summary>
         /// Creates a new connection to an SQLite Database
         /// </summary>
         /// <param name="connectionString">The Connection string to connect to this database</param>
         public SQLiteContext(string connectionString)
         {
             ConnectionString = connectionString;
-            Connection = new SQLiteConnection(connectionString);
+            Connection = new SqliteConnection(connectionString);
+            Connection.Disposed += Connection_Disposed;
         }
 
         /// <summary>
         /// Creates a new connection to an SQLite Database
         /// </summary>
         /// <param name="builder">The Connection string to connect to this database</param>
-        public SQLiteContext(SQLiteConnectionStringBuilder builder)
+        public SQLiteContext(SqliteConnectionStringBuilder builder)
         {
             ConnectionString = builder.ToString();
-            Connection = new SQLiteConnection(ConnectionString);
+            Connection = new SqliteConnection(ConnectionString);
+            Connection.Disposed += Connection_Disposed;
+        }
+
+        private void Connection_Disposed(object sender, EventArgs e)
+        {
+            IsDisposed = true;
         }
 
         /// <summary>
@@ -143,6 +163,20 @@ namespace CrossLite
             catch (ObjectDisposedException) { }
         }
 
+        /// <summary>
+        /// Indicates whether the database connection appears to be open
+        /// </summary>
+        /// <returns></returns>
+        public bool IsConnected()
+        {
+            if (IsDisposed) return false;
+
+            //if (Connection.State == ConnectionState.Open)
+            return true;
+
+            //return false;
+        }
+
         #endregion Connection Management
 
         #region Execute Methods
@@ -155,7 +189,7 @@ namespace CrossLite
         public int Execute(string sql)
         {
             // Create the SQL Command
-            using (SQLiteCommand Command = this.CreateCommand(sql))
+            using (SqliteCommand Command = this.CreateCommand(sql))
                 return Command.ExecuteNonQuery();
         }
 
@@ -321,10 +355,10 @@ namespace CrossLite
         /// <returns></returns>
         public IEnumerable<Dictionary<string, object>> Query(string sql, params object[] parameters)
         {
-            var paramItems = new List<SQLiteParameter>(parameters.Length);
+            var paramItems = new List<SqliteParameter>(parameters.Length);
             for (int i = 0; i < parameters.Length; i++)
             {
-                SQLiteParameter Param = this.CreateParameter();
+                SqliteParameter Param = this.CreateParameter();
                 Param.ParameterName = "@P" + i;
                 Param.Value = parameters[i];
                 paramItems.Add(Param);
@@ -339,20 +373,20 @@ namespace CrossLite
         /// <param name="sql">The SQL Statement to run on the database</param>
         /// <param name="parameters">A list of sql params to add to the command</param>
         /// <returns></returns>
-        public IEnumerable<Dictionary<string, object>> Query(string sql, IEnumerable<SQLiteParameter> parameters)
+        public IEnumerable<Dictionary<string, object>> Query(string sql, IEnumerable<SqliteParameter> parameters)
         {
             // Create our Rows result
             var rows = new List<Dictionary<string, object>>();
 
             // Create the SQL Command
-            using (SQLiteCommand command = this.CreateCommand(sql))
+            using (SqliteCommand command = this.CreateCommand(sql))
             {
                 // Add params
-                foreach (SQLiteParameter Param in parameters)
+                foreach (SqliteParameter Param in parameters)
                     command.Parameters.Add(Param);
 
                 // Execute the query
-                using (SQLiteDataReader reader = command.ExecuteReader())
+                using (SqliteDataReader reader = command.ExecuteReader())
                 {
                     // If we have rows, add them to the list
                     if (reader.HasRows)
@@ -382,18 +416,46 @@ namespace CrossLite
         /// The first parameter replaces @P0, second @P1 etc etc.
         /// </param>
         /// <returns></returns>
-        public IEnumerable<T> Query<T>(string sql, params object[] parameters) where T : class
+        public IEnumerable<T> Query<T>(string sql, params object[] parameters) where T : EntityBase, new()
         {
-            var paramItems = new List<SQLiteParameter>(parameters.Length);
+            var paramItems = new List<SqliteParameter>(parameters.Length);
             for (int i = 0; i < parameters.Length; i++)
             {
-                SQLiteParameter Param = this.CreateParameter();
+                SqliteParameter Param = this.CreateParameter();
                 Param.ParameterName = "@P" + i;
                 Param.Value = parameters[i];
                 paramItems.Add(Param);
             }
 
-            return this.Query<T>(sql, paramItems);
+            // Get our Table Mapping
+            Type objType = typeof(T);
+            TableMapping table = EntityCache.GetTableMap(objType);
+
+            // Create the SQL Command
+            using (SqliteCommand command = this.CreateCommand(sql))
+            {
+                // Add params
+                foreach (SqliteParameter param in parameters)
+                    command.Parameters.Add(param);
+
+                // Execute the query
+                using (SqliteDataReader reader = command.ExecuteReader())
+                {
+                    // If we have rows, add them to the list
+                    if (reader.HasRows)
+                    {
+                        // Add each row to the rows list
+                        while (reader.Read())
+                        {
+                            // Add object
+                            yield return ConvertToEntity<T>(table, reader);
+                        }
+                    }
+
+                    // Cleanup
+                    reader.Close();
+                }
+            }
         }
 
         /// <summary>
@@ -402,21 +464,21 @@ namespace CrossLite
         /// <param name="sql">The SQL Statement to run on the database</param>
         /// <param name="parameters">A list of sql params to add to the command</param>
         /// <returns></returns>
-        public IEnumerable<T> Query<T>(string sql, IEnumerable<SQLiteParameter> parameters) where T : class
+        public IEnumerable<T> Query<T>(string sql, IEnumerable<SqliteParameter> parameters) where T : EntityBase, new()
         {
             // Get our Table Mapping
             Type objType = typeof(T);
             TableMapping table = EntityCache.GetTableMap(objType);
 
             // Create the SQL Command
-            using (SQLiteCommand command = this.CreateCommand(sql))
+            using (SqliteCommand command = this.CreateCommand(sql))
             {
                 // Add params
-                foreach (SQLiteParameter param in parameters)
+                foreach (SqliteParameter param in parameters)
                     command.Parameters.Add(param);
 
                 // Execute the query
-                using (SQLiteDataReader reader = command.ExecuteReader())
+                using (SqliteDataReader reader = command.ExecuteReader())
                 {
                     // If we have rows, add them to the list
                     if (reader.HasRows)
@@ -439,7 +501,7 @@ namespace CrossLite
         /// Executes the given Sql command and returns the result rows as entities
         /// </summary>
         /// <returns></returns>
-        internal IEnumerable<T> ExecuteReader<T>(SQLiteCommand command) where T : class
+        internal IEnumerable<T> ExecuteReader<T>(SqliteCommand command) where T : EntityBase, new()
         {
             // Get our Table Mapping
             Type objType = typeof(T);
@@ -448,7 +510,7 @@ namespace CrossLite
 
             // Create the SQL Command
             using (command)
-            using (SQLiteDataReader reader = command.ExecuteReader())
+            using (SqliteDataReader reader = command.ExecuteReader())
             {
                 // If we have rows, add them to the list
                 if (reader.HasRows)
@@ -470,14 +532,14 @@ namespace CrossLite
         /// Executes the given Sql command and returns the result rows
         /// </summary>
         /// <returns></returns>
-        public IEnumerable<Dictionary<string, object>> ExecuteReader(SQLiteCommand command)
+        public IEnumerable<Dictionary<string, object>> ExecuteReader(SqliteCommand command)
         {
             // Create our Rows result
             var rows = new List<Dictionary<string, object>>();
 
             // Create the SQL Command
             using (command)
-            using (SQLiteDataReader reader = command.ExecuteReader())
+            using (SqliteDataReader reader = command.ExecuteReader())
             {
                 // If we have rows, add them to the list
                 if (reader.HasRows)
@@ -504,7 +566,7 @@ namespace CrossLite
         /// </summary>
         /// <typeparam name="TEntity">The Entity Type</typeparam>
         /// <returns></returns>
-        internal IEnumerable<TEntity> Select<TEntity>() where TEntity : class
+        public IEnumerable<TEntity> Select<TEntity>() where TEntity : EntityBase, new()
         {
             // Get our Table Mapping
             Type objType = typeof(TEntity);
@@ -512,8 +574,8 @@ namespace CrossLite
             string sql = $"SELECT * FROM {QuoteIdentifier(table.TableName)};";
 
             // Create the SQL Command
-            using (SQLiteCommand command = this.CreateCommand(sql))
-            using (SQLiteDataReader reader = command.ExecuteReader())
+            using (SqliteCommand command = this.CreateCommand(sql))
+            using (SqliteDataReader reader = command.ExecuteReader())
             {
                 // If we have rows, add them to the list
                 if (reader.HasRows)
@@ -526,6 +588,48 @@ namespace CrossLite
                 // Cleanup
                 reader.Close();
             }
+        }
+
+        /// <summary>
+        /// Peforms a SELECT query on the Entity Type, and returns the Enumerator
+        /// for the Result set.
+        /// </summary>
+        /// <typeparam name="TEntity">The Entity Type</typeparam>
+        /// <returns></returns>
+        public IEnumerable<TEntity> Select<TEntity>(string where) where TEntity : EntityBase, new()
+        {
+            // Get our Table Mapping
+            Type objType = typeof(TEntity);
+            TableMapping table = EntityCache.GetTableMap(objType);
+            string sql = $"SELECT * FROM {QuoteIdentifier(table.TableName)} WHERE " + where;
+
+            // Create the SQL Command
+            using (SqliteCommand command = this.CreateCommand(sql))
+            using (SqliteDataReader reader = command.ExecuteReader())
+            {
+                // If we have rows, add them to the list
+                if (reader.HasRows)
+                {
+                    // Return each row
+                    while (reader.Read())
+                        yield return ConvertToEntity<TEntity>(table, reader);
+                }
+
+                // Cleanup
+                reader.Close();
+            }
+        }
+
+        /// <summary>
+        /// Executes the query, and returns the first column of the first row in the result 
+        /// set returned by the query. Additional columns or rows are ignored.
+        /// </summary>
+        /// <param name="sql">The SQL statement to be executed</param>
+        public SelectQueryBuilder From<T>() where T : IConvertible
+        {
+            SelectQueryBuilder builder = new SelectQueryBuilder(this);
+            builder.Table = EntityCache.GetTableMap(typeof(T)).TableName;
+            return builder;
         }
 
         #endregion Query Methods
@@ -579,7 +683,7 @@ namespace CrossLite
             // -----------------------------------------
             // Execute the command on the database
             // -----------------------------------------
-            using (SQLiteCommand command = CreateCommand(sql.ToString()))
+            using (SqliteCommand command = CreateCommand(sql.ToString()))
             {
                 command.ExecuteNonQuery();
             }
@@ -596,38 +700,87 @@ namespace CrossLite
             // -----------------------------------------
             // Execute the command on the database
             // -----------------------------------------
-            using (SQLiteCommand command = CreateCommand(sql.ToString()))
+            using (SqliteCommand command = CreateCommand(sql.ToString()))
             {
                 command.ExecuteNonQuery();
             }
         }
 
-        #endregion Indexing Methods
-
-        #region Helper Methods
-
         /// <summary>
-        /// Creates a new command to be executed on the database
+        /// Creates and returns a new <see cref="SqliteCommand"/> configured with the specified query string and
+        /// optional parameters.
         /// </summary>
-        public SQLiteCommand CreateCommand() => new SQLiteCommand(Connection);
+        /// <remarks>The caller is responsible for ensuring that the query string is properly
+        /// parameterized to avoid SQL injection vulnerabilities. If a transaction is active on the connection, it will
+        /// automatically be associated with the created command.</remarks>
+        /// <param name="queryString">The SQL query string to be executed. This string should not include unvalidated user input to prevent SQL
+        /// injection.</param>
+        /// <param name="parameters">An optional collection of <see cref="DbParameter"/> objects to be added to the command. If null, no
+        /// parameters are added.</param>
+        /// <returns>A <see cref="SqliteCommand"/> instance configured with the specified query string and parameters. If a
+        /// transaction is active, it is associated with the command.</returns>
+        public SqliteCommand CreateCommand(string queryString, IEnumerable<DbParameter> parameters = null)
+        {
+            var cmd = Connection.CreateCommand();
+            cmd.CommandText = queryString;
 
-        /// <summary>
-        /// Creates a new command to be executed on the database
-        /// </summary>
-        /// <param name="queryString">The query string this command will use</param>
-        public SQLiteCommand CreateCommand(string queryString) => new SQLiteCommand(queryString, Connection);
+            if (Transaction != null)
+                cmd.Transaction = Transaction;
+
+            if (parameters != null)
+            {
+                foreach (var param in parameters)
+                {
+                    cmd.Parameters.Add(param);
+                }
+            }
+
+            return cmd;
+        }
 
         /// <summary>
         /// Creates a DbParameter using the current Database engine's Parameter object
         /// </summary>
         /// <returns></returns>
-        public SQLiteParameter CreateParameter() => new SQLiteParameter();
+        public SqliteParameter CreateParameter() => new SqliteParameter();
 
         /// <summary>
         /// Begins a new database transaction
         /// </summary>
         /// <returns></returns>
-        public SQLiteTransaction BeginTransaction() => Connection.BeginTransaction();
+        public TransactionScope BeginTransaction()
+        {
+            if (Transaction != null)
+                throw new InvalidOperationException("A transaction is already in progress on this connection.");
+
+            Transaction = Connection.BeginTransaction();
+            return new TransactionScope(this);
+        }
+
+        /// <summary>
+        /// Commits the current transaction and releases the associated resources.
+        /// </summary>
+        /// <remarks>This method finalizes the current transaction by committing any pending changes. 
+        /// After the transaction is committed, the transaction object is set to <see langword="null" />. Ensure that a
+        /// transaction is active before calling this method to avoid unexpected behavior.</remarks>
+        public void CommitTransaction()
+        {
+            Transaction?.Commit();
+            Transaction?.Dispose();
+            Transaction = null;
+        }
+
+        /// <summary>
+        /// Rolls back the current transaction, if one is active.
+        /// </summary>
+        /// <remarks>This method reverts any changes made during the transaction and resets the
+        /// transaction state.  If no transaction is active, the method has no effect.</remarks>
+        public void RollbackTransaction()
+        {
+            Transaction?.Rollback();
+            Transaction?.Dispose();
+            Transaction = null;
+        }
 
         /// <summary>
         /// Converts attributes from an <see cref="SQLiteDataReader"/> to an Entity
@@ -635,25 +788,41 @@ namespace CrossLite
         /// <param name="table">The <see cref="TableMapping"/> for this Entity</param>
         /// <param name="reader">The current, open DataReader object</param>
         /// <returns></returns>
-        internal TEntity ConvertToEntity<TEntity>(TableMapping table, SQLiteDataReader reader)
+        internal TEntity ConvertToEntity<TEntity>(TableMapping table, SqliteDataReader reader) where TEntity : EntityBase, new()
         {
             // Use reflection to map the column name to the object Property
-            TEntity entity = (TEntity)Activator.CreateInstance(table.EntityType, new object[] { });
+            TEntity entity = new() { State = EntityState.Loading };
+            if (table.HasVirtuals)
+            {
+                // Create the generator and your interceptor
+                var interceptor = new EntityInterceptor(this, table);
+                entity = Generator.CreateClassProxyWithTarget(entity, interceptor);
+            }
+
+            // Map each column to the property
             for (int i = 0; i < reader.FieldCount; ++i)
             {
                 string attrName = reader.GetName(i);
-                PropertyInfo property = table.GetAttribute(attrName).Property;
+                var attribute = table.GetAttributeByColumnName(attrName);
+                PropertyInfo property = attribute.Property;
+                bool isNullable = attribute.IsNullable;
+                Type underlyingType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
 
-                if (property.PropertyType.IsEnum)
+                if (underlyingType.IsEnum)
                 {
-                    var value = Enum.Parse(property.PropertyType, reader.GetValue(i).ToString());
+                    var value = Enum.Parse(underlyingType, reader.GetValue(i).ToString());
                     property.SetValue(entity, value);
+                }
+                else if (isNullable && reader.IsDBNull(i))
+                {
+                    // If the property is nullable, we can set it to null
+                    property.SetValue(entity, null);
                 }
                 else
                 {
                     // SQLite doesn't support nearly as many primitive types as
                     // C# does, so we must translate
-                    switch (Type.GetTypeCode(property.PropertyType))
+                    switch (Type.GetTypeCode(underlyingType))
                     {
                         case TypeCode.Byte:
                             property.SetValue(entity, reader.GetByte(i));
@@ -695,10 +864,51 @@ namespace CrossLite
                 }
             }
 
-            // Foreign keys!
-            table.CreateRelationships(entity, this);
+            // Update entity state
+            entity.State = EntityState.Fresh;
 
             // Add object
+            return entity;
+        }
+
+        /// <summary>
+        /// Creates a new instance of the specified entity type.
+        /// </summary>
+        /// <remarks>The entity type must be mapped in the <see cref="EntityCache"/>. If the mapping is
+        /// not found, an exception may be thrown.</remarks>
+        /// <typeparam name="TEntity">The type of the entity to create. Must derive from <see cref="EntityBase"/> and have a parameterless
+        /// constructor.</typeparam>
+        /// <returns>A new instance of the specified entity type.</returns>
+        public TEntity CreateEntity<TEntity>() where TEntity : EntityBase, new()
+        {
+            var table = EntityCache.GetTableMap(typeof(TEntity));
+            return CreateEntity<TEntity>(table);
+        }
+
+        /// <summary>
+        /// Creates a new instance of the specified entity type, optionally applying a proxy with an interceptor if the
+        /// table mapping includes virtual properties.
+        /// </summary>
+        /// <remarks>The returned entity may include a proxy if the table mapping specifies virtual
+        /// properties. This proxy enables additional behaviors, such as interception of property access or method
+        /// calls.</remarks>
+        /// <typeparam name="TEntity">The type of the entity to create. Must inherit from <see cref="EntityBase"/> and have a parameterless
+        /// constructor.</typeparam>
+        /// <param name="table">The table mapping that defines the entity's structure and metadata.</param>
+        /// <returns>A new instance of <typeparamref name="TEntity"/>. If the table mapping includes virtual properties, the
+        /// instance will be a proxied object with an interceptor applied.</returns>
+        internal TEntity CreateEntity<TEntity>(TableMapping table) where TEntity : EntityBase, new()
+        {
+            // Use reflection to map the column name to the object Property
+            TEntity entity = new();
+            if (table.HasVirtuals)
+            {
+                // Create the generator and your interceptor
+                var interceptor = new EntityInterceptor(this, table);
+                entity = Generator.CreateClassProxyWithTarget(entity, interceptor);
+            }
+
+            // Return the proxy.
             return entity;
         }
 
@@ -879,7 +1089,7 @@ namespace CrossLite
         /// <summary>
         /// Gets or sets the list of SQLite reserved keywords
         /// </summary>
-        public static HashSet<string> Keywords = new HashSet<string>(new string[] 
+        public static HashSet<string> Keywords = new HashSet<string>(new string[]
             {
                 "ABORT",
                 "ACTION",
@@ -1005,10 +1215,55 @@ namespace CrossLite
                 "WHERE",
                 "WITH",
                 "WITHOUT",
-            }, 
+            },
             StringComparer.OrdinalIgnoreCase
         );
 
         #endregion
+
+        /// <summary>
+        /// Provides a scope for managing database transactions, ensuring that transactions are either committed or
+        /// rolled back to maintain data consistency.
+        /// </summary>
+        /// <remarks>Use this class to encapsulate a block of code that requires transactional behavior.
+        /// The transaction is automatically rolled back if <see cref="Commit"/> is not explicitly called before the
+        /// scope is disposed. This ensures that any uncommitted changes are reverted, maintaining the integrity of the
+        /// database.</remarks>
+        public class TransactionScope : IDisposable
+        {
+            private readonly SQLiteContext _context;
+
+            internal TransactionScope(SQLiteContext context)
+            {
+                _context = context;
+            }
+
+            public void Commit()
+            {
+                _context.CommitTransaction();
+            }
+
+            public void Rollback()
+            {
+                _context.RollbackTransaction();
+            }
+
+            /// <summary>
+            /// Releases all resources used by the current instance and ensures that any active transaction is rolled
+            /// back if not committed.
+            /// </summary>
+            /// <remarks>If the transaction is still active when this method is called, it will be
+            /// rolled back to maintain data consistency.  Call <see cref="Commit"/> before disposing to finalize the
+            /// transaction and avoid a rollback.</remarks>
+            public void Dispose()
+            {
+                // If the transaction is still active when this is called,
+                // it means Commit() was never called, so we should roll back.
+                if (_context.Transaction != null)
+                {
+                    _context.RollbackTransaction();
+                }
+            }
+        }
     }
 }

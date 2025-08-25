@@ -2,7 +2,15 @@
 
 namespace System
 {
-    internal static class StringBuilderExtensions
+    /// <summary>
+    /// Provides extension methods for the <see cref="StringBuilder"/> class, enabling additional functionality such as
+    /// conditional appending and clearing the contents of a <see cref="StringBuilder"/> instance.
+    /// </summary>
+    /// <remarks>These extension methods are designed to simplify common operations on <see
+    /// cref="StringBuilder"/> objects, such as clearing their contents or appending values conditionally based on a
+    /// predicate. The methods return the modified <see cref="StringBuilder"/> instance to allow for method
+    /// chaining.</remarks>
+    public static class StringBuilderExtensions
     {
         /// <summary>
         /// Clears the current contents of this StringBuilder

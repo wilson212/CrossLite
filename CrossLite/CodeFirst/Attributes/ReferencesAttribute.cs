@@ -8,7 +8,7 @@ namespace CrossLite.CodeFirst
     /// creation: <see cref="SQLiteContext.CreateTable{TEntity}(bool)"/>
     /// </summary>
     [AttributeUsage(AttributeTargets.Property)]
-    public class InverseKeyAttribute : Attribute
+    public class ReferencesAttribute : Attribute
     {
         /// <summary>
         /// Gets an array of parent attribute names on a foreign key constraint
@@ -16,10 +16,22 @@ namespace CrossLite.CodeFirst
         public string[] Attributes { get; protected set; }
 
         /// <summary>
-        /// Creates a new instance of <see cref="InverseKeyAttribute"/>
+        /// Gets the <see cref="ReferentialIntegrity"/> for this key restraint 
+        /// when a row in the parent table is deleted
+        /// </summary>
+        public ReferentialIntegrity OnDelete { get; set; } = ReferentialIntegrity.NoAction;
+
+        /// <summary>
+        /// Gets the <see cref="ReferentialIntegrity"/> for this key restraint 
+        /// when a row in the parent table is updated
+        /// </summary>
+        public ReferentialIntegrity OnUpdate { get; set; } = ReferentialIntegrity.NoAction;
+
+        /// <summary>
+        /// Creates a new instance of <see cref="ReferencesAttribute"/>
         /// </summary>
         /// <param name="attributes">The Parent Entity column name(s) in the parent table.</param>
-        public InverseKeyAttribute(params string[]  attributes)
+        public ReferencesAttribute(params string[]  attributes)
         {
             this.Attributes = attributes;
         }

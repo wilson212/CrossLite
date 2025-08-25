@@ -3,6 +3,18 @@ using System.Collections.Specialized;
 
 namespace CrossLite.Collections
 {
+    /// <summary>
+    /// Represents a collection of key/value pairs that are accessible by the key or index,  and maintains the order in
+    /// which the items were added.
+    /// </summary>
+    /// <remarks>This interface extends <see cref="IDictionary{TKey, TValue}"/> by adding methods and
+    /// properties  to access elements by their index in the collection. It also provides methods to insert or remove 
+    /// elements at specific indices, and to retrieve the index of a specific key. <para> The order of elements in the
+    /// collection is preserved based on the sequence in which they were added.  Modifications to the collection, such
+    /// as inserting or removing elements, will adjust the indices  of subsequent elements accordingly.
+    /// </para></remarks>
+    /// <typeparam name="TKey">The type of the keys in the dictionary.</typeparam>
+    /// <typeparam name="TValue">The type of the values in the dictionary.</typeparam>
     public interface IOrderedDictionary<TKey, TValue> : IDictionary<TKey, TValue>, IOrderedDictionary
     {
         new TValue this[int index] { get; set; }

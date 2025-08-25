@@ -44,7 +44,7 @@ namespace CrossLite.QueryBuilder
         public Comparison ComparisonOperator { get; set; }
 
         /// <summary>
-        /// Specifies the Joining Table Name
+        /// Specifies the Joining Table ColumnName
         /// </summary>
         public TableIndentifier JoiningTable { get; internal set; }
 

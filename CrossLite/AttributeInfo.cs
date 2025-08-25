@@ -3,33 +3,50 @@ using CrossLite.CodeFirst;
 
 namespace CrossLite
 {
+    /// <summary>
+    /// Represents metadata about a database column, including its constraints, attributes, and associated properties.
+    /// </summary>
+    /// <remarks>This class provides detailed information about a database column, such as whether it is a
+    /// primary key, auto-incrementing, unique, indexed, nullable, or has a default value. It also includes metadata
+    /// about foreign key relationships and collation settings. The information is typically used to map database 
+    /// schema details to application-level entities.</remarks>
     public class AttributeInfo
     {
         /// <summary>
         /// Gets the attribute (column) name in the database
         /// </summary>
-        public string Name { get; internal set; }
+        public string ColumnName { get; internal set; }
 
         /// <summary>
         /// Indicates whether this attribute is a Key
         /// </summary>
-        public bool PrimaryKey { get; internal set; } = false;
+        public bool IsPrimaryKey { get; internal set; } = false;
 
         /// <summary>
         /// Indicates whether this attribute Auto Increments (Must be a Key!).
         /// AUTOINCREMENT is to prevent the reuse of ROWIDs from previously deleted rows.
         /// </summary>
-        public bool AutoIncrement { get; internal set; } = false;
+        public bool IsAutoIncrement { get; internal set; } = false;
 
         /// <summary>
         /// Indicates whether this attribute value is unique
         /// </summary>
-        public bool Unique { get; internal set; } = false;
+        public bool IsUnique { get; internal set; } = false;
+
+        /// <summary>
+        /// Indicates whether this attribute is indexed
+        /// </summary>
+        public bool IsIndexed { get; internal set; } = false;
 
         /// <summary>
         /// Gets the default value for this attribute
         /// </summary>
         public DefaultAttribute DefaultValue { get; internal set; } = null;
+
+        /// <summary>
+        /// Gets a value indicating whether the associated entity or value can be null.
+        /// </summary>
+        public bool IsNullable { get; internal set; } = false;
 
         /// <summary>
         /// Indicates whether this Attribute Requires a value and
@@ -53,14 +70,19 @@ namespace CrossLite
         /// </summary>
         public ForeignKeyAttribute ForeignKey { get; internal set; }
 
-        public override string ToString() => Name;
+        /// <summary>
+        /// Gets the order in which this item is processed relative to others.
+        /// </summary>
+        public int Order { get; internal set; } = 99;
+
+        public override string ToString() => ColumnName;
 
         public override bool Equals(object obj)
         {
             if (obj is AttributeInfo)
             {
                 var item = (AttributeInfo)obj;
-                return item.Name.Equals(this.Name);
+                return item.ColumnName.Equals(this.ColumnName);
             }
             return false;
         }

@@ -12,6 +12,7 @@ namespace CrossLite
         TEXT,
         REAL,
         NUMERIC,
-        BLOB
+        BLOB,
+        NULL
     }
 }

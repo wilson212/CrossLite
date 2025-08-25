@@ -24,10 +24,16 @@ namespace CrossLite.CodeFirst
         /// </summary>
         public bool Quote { get; set; } = true;
 
-        public DefaultAttribute(object Value)
+        public DefaultAttribute(object val)
         {
-            this.Value = Value;
-            this.SQLiteDataType = SQLiteContext.GetSQLiteType(Value.GetType());
+            this.Value = val;
+            if (val == null)
+            {
+                this.SQLiteDataType = SQLiteDataType.NULL;
+                this.Quote = false; // NULL does not need quoting
+                return;
+            }
+            this.SQLiteDataType = SQLiteContext.GetSQLiteType(val.GetType());
             this.Quote = (SQLiteDataType != SQLiteDataType.INTEGER && SQLiteDataType != SQLiteDataType.REAL);
         }
     }

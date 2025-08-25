@@ -1,6 +1,6 @@
-﻿using System;
+using Microsoft.Data.Sqlite;
+using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.Linq;
 using System.Text;
 
@@ -179,7 +179,7 @@ namespace CrossLite.QueryBuilder
         /// <summary>
         /// Specifies the comparison of this expression with a Less than or equal operator
         /// </summary>
-        public TWhere LessOrEquals<T>(T value) where T : struct 
+        public TWhere LessOrEquals<T>(T value) where T : struct
             => SetValue(value, Comparison.LessOrEquals);
 
         /// <summary>
@@ -294,7 +294,7 @@ namespace CrossLite.QueryBuilder
         /// </summary>
         /// <param name="parameters"></param>
         /// <returns></returns>
-        public string BuildExpression(List<SQLiteParameter> parameters)
+        public string BuildExpression(List<SqliteParameter> parameters)
         {
             // Check for literals
             var isLiteral = (Value is SqlLiteral);
@@ -310,11 +310,11 @@ namespace CrossLite.QueryBuilder
                     // Add the between values to the command parameters
                     Array between = ((Array)Value);
 
-                    SQLiteParameter param1 = new SQLiteParameter();
+                    var param1 = new SqliteParameter();
                     param1.ParameterName = "@P" + parameters.Count;
                     param1.Value = between.GetValue(0);
 
-                    SQLiteParameter param2 = new SQLiteParameter();
+                    var param2 = new SqliteParameter();
                     param2.ParameterName = "@P" + (parameters.Count + 1);
                     param2.Value = between.GetValue(1);
 
@@ -333,7 +333,7 @@ namespace CrossLite.QueryBuilder
 
                     foreach (var obj in values)
                     {
-                        SQLiteParameter param = new SQLiteParameter();
+                        var param = new SqliteParameter();
                         param.ParameterName = "@P" + parameters.Count;
                         param.Value = obj;
                         parameters.Add(param);
@@ -348,7 +348,7 @@ namespace CrossLite.QueryBuilder
                 else
                 {
                     // Create param for value
-                    SQLiteParameter param = new SQLiteParameter();
+                    var param = new SqliteParameter();
                     param.ParameterName = "@P" + parameters.Count;
                     param.Value = Value;
 
@@ -356,7 +356,7 @@ namespace CrossLite.QueryBuilder
                     parameters.Add(param);
 
                     // Add statement
-                   return CreateExpressionString(param);
+                    return CreateExpressionString(param);
                 }
             }
             else if (isLiteral)
@@ -377,9 +377,9 @@ namespace CrossLite.QueryBuilder
         /// <summary>
         /// Creates an SQL expression with the value of the <see cref="SQLiteParameter.ParameterName"/>. 
         /// </summary>
-        private string CreateExpressionString(SQLiteParameter param)
+        private string CreateExpressionString(SqliteParameter param)
         {
-            // Correct Name and define variables
+            // Correct ColumnName and define variables
             string fieldName = SQLiteContext.QuoteIdentifier(Identifier, Statement.AttributeQuoteMode, Statement.AttributeQuoteKind);
             switch (ComparisonOperator)
             {
@@ -412,11 +412,11 @@ namespace CrossLite.QueryBuilder
         }
 
         /// <summary>
-        /// Creates an SQL expression with the values of the <see cref="SQLiteParameter.ParameterName"/>'s. 
+        /// Creates an SQL expression with the values of the <see cref="SqliteParameter.ParameterName"/>'s. 
         /// </summary>
-        private string CreateExpressionString(params SQLiteParameter[] parameters)
+        private string CreateExpressionString(params SqliteParameter[] parameters)
         {
-            // Correct Name and define variables
+            // Correct ColumnName and define variables
             string fieldName = SQLiteContext.QuoteIdentifier(Identifier, Statement.AttributeQuoteMode, Statement.AttributeQuoteKind);
             switch (ComparisonOperator)
             {
@@ -446,7 +446,7 @@ namespace CrossLite.QueryBuilder
         /// </summary>
         private string CreateExpressionString(SqlLiteral literal)
         {
-            // Correct Name and define variables
+            // Correct ColumnName and define variables
             string fieldName = SQLiteContext.QuoteIdentifier(Identifier, Statement.AttributeQuoteMode, Statement.AttributeQuoteKind);
             switch (ComparisonOperator)
             {
@@ -479,7 +479,7 @@ namespace CrossLite.QueryBuilder
         /// <returns></returns>
         private string CreateExpressionString()
         {
-            // Correct Name and define variables
+            // Correct ColumnName and define variables
             string fieldName = SQLiteContext.QuoteIdentifier(Identifier, Statement.AttributeQuoteMode, Statement.AttributeQuoteKind);
 
             // Only 2 options for null values
@@ -549,7 +549,7 @@ namespace CrossLite.QueryBuilder
         /// </summary>
         public static string CreateExpressionString(string fieldName, Comparison @operator, SqlLiteral literal)
         {
-            // Correct Name and define variables
+            // Correct ColumnName and define variables
             switch (@operator)
             {
                 case Comparison.Equals:
