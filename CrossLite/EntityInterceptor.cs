@@ -125,15 +125,15 @@ namespace CrossLite
                         var foreignTable = EntityCache.GetTableMap(info.ParentEntityType);
 
                         // Update the foreign key columns on this entity
-                        for (int index = 0; index < foreignKey.Attributes.Length; index++)
+                        for (int index = 0; index < foreignKey.PropertyNames.Length; index++)
                         {
                             // Get the attribute info for this foreign key column
-                            var colName = foreignKey.Attributes[index];
-                            var attrInfo = Table.GetAttributeByColumnName(colName);
+                            var propName = foreignKey.PropertyNames[index];
+                            var attrInfo = Table.GetAttributeByPropertyName(propName);
                             if (attrInfo != null)
                             {
                                 // Set the foreign key id property on this entity
-                                var foreignAttrInfo = foreignTable.GetAttributeByColumnName(info.Reference.Attributes[index]);
+                                var foreignAttrInfo = foreignTable.GetAttributeByPropertyName(info.Reference.PropertyNames[index]);
                                 var foreignValue = foreignAttrInfo.Property.GetValue(foreignObj);
 
                                 // This will recusively call this interceptor, but since it's not a foreign key property,
@@ -186,10 +186,25 @@ namespace CrossLite
                             return;
                         }
 
+                        // -- Load the Child Entities into an EntitySet<T> --
+
+                        // Check if foreign key properties are dirty; if so, we cannot load the child entities
+                        var childTable = EntityCache.GetTableMap(Table.ChildRelationships.First(r => r.Key.Name == propertyName).Value);
+                        foreach (var fk in childTable.ForeignKeys.Where(fk => fk.ParentEntityType == Table.EntityType))
+                        {
+                            var isDirty = fk.ForeignKey.PropertyNames.Any(entity.DirtyProperties.Contains);
+                            if (isDirty)
+                            {
+                                // Cannot load child entities if foreign key properties are dirty
+                                invocation.ReturnValue = null;
+                                return;
+                            }
+                        }
+
                         // Create a new EntitySet<T> instance and load it
                         var item = Table.ChildRelationships.FirstOrDefault(r => r.Key.Name == propertyName);
                         var entitySetType = typeof(ChildDbSet<,>).MakeGenericType(Table.EntityType, item.Value);
-                        var entitySetInstance = Activator.CreateInstance(entitySetType, [entity, Context]);
+                        var entitySetInstance = Activator.CreateInstance(entitySetType, [entity, item.Key, Context]);
 
                         // Cache the loaded EntitySet<T>
                         EntitySetCache[propertyName] = entitySetInstance;

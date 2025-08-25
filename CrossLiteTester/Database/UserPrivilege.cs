@@ -19,16 +19,16 @@ namespace CrossLiteTester
         /// Using "Fetch()" on this lazy loading class will retrieve
         /// the Account object that this UserPriv references
         /// </summary>
-        [ForeignKey("uid")]
-        [References("Id", OnDelete = ReferentialIntegrity.Cascade)]
+        [ForeignKey(nameof(UserId))]
+        [References(nameof(CrossLiteTester.Account.Id), OnDelete = ReferentialIntegrity.Cascade)]
         public virtual Account Account { get; set; }
 
         /// <summary>
         /// Using "Fetch()" on this lazy loading class will retrieve
         /// the Privilege object that this UserPriv references
         /// </summary>
-        [ForeignKey("pid")]   
-        [References("id", OnDelete = ReferentialIntegrity.Cascade)]   
+        [ForeignKey(nameof(PrivilegeId))]   
+        [References(nameof(CrossLiteTester.Privilege.Id), OnDelete = ReferentialIntegrity.Cascade)]   
         public virtual Privilege Privilege { get; set; }
     }
 }

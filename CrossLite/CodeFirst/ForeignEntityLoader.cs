@@ -98,17 +98,19 @@ namespace CrossLite.CodeFirst
 
             // Fill up the WhereStatement with joining keys specific to this Child
             // entities instance
-            for (int i = 0; i < Constraint.ForeignKey.Attributes.Length; i++)
+            for (int i = 0; i < Constraint.ForeignKey.PropertyNames.Length; i++)
             {
                 // Grab attribute names
-                string childColName = Constraint.ForeignKey.Attributes[i]; // pid
-                string parentColName = Constraint.Reference.Attributes[i]; // id
+                string childPropName = Constraint.ForeignKey.PropertyNames[i];
+                string parentPropName = Constraint.Reference.PropertyNames[i];
 
                 // Get the value of the child attribute on this Entity instance
-                AttributeInfo info = ChildTable.GetAttributeByColumnName(childColName);
+                AttributeInfo info = ChildTable.GetAttributeByPropertyName(childPropName);
                 object val = info.Property.GetValue(ChildEntity);
 
                 // Add the key => value to the where statement
+                var parentTable = EntityCache.GetTableMap(typeof(TParentEntity));
+                string parentColName = parentTable.GetAttributeByPropertyName(parentPropName).ColumnName;
                 Statement.And(parentColName, Comparison.Equals, val);
             }
         }

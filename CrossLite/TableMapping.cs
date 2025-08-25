@@ -30,11 +30,11 @@ namespace CrossLite
         public CompositeIndexAttribute[] CompositeIndexes { get; protected set; }
 
         /// <summary>
-        /// Gets a collection of keys on this table, that are considered Primary Keys. These are the column names, 
-        /// not the Property names in the Entity. By default, the column names are the same as the Property names,
+        /// Gets a collection of keys on this table, that are considered Primary Keys. These are the property names, 
+        /// not the column names in the database. By default, the column names are the same as the Property names,
         /// but this can be overridden using the <see cref="ColumnAttribute"/> on the Entity.
         /// </summary>
-        public IReadOnlyCollection<string> PrimaryKeys { get; protected set; }
+        public IReadOnlyCollection<AttributeInfo> PrimaryKeys { get; protected set; }
 
         /// <summary>
         /// Get or sets the RowId column
@@ -278,11 +278,11 @@ namespace CrossLite
             // Set internals
             DatabaseColumns = cols;
             EntityProperties = props;
-            PrimaryKeys = [.. primaryKeys.OrderBy(x => x.Order).Select(x => x.ColumnName)];
+            PrimaryKeys = [.. primaryKeys.OrderBy(x => x.Order)];
             var foreignKeys = new HashSet<ForeignKeyConstraint>();
 
             // ------------------------------------
-            // Always check foreign keys after sett ing the DatabaseColumns property!
+            // Always check foreign keys after setting the DatabaseColumns property!
             // 
             // We must always check foreign keys after loading all of the entities props,
             // because the props may not be ordered correctly in the class itself. This
@@ -302,12 +302,12 @@ namespace CrossLite
                     : property.PropertyType;
 
                 // Create ForeignKeyInfo
-                ReferencesAttribute inv = inverse ?? new ReferencesAttribute(fkey.Attributes);
+                ReferencesAttribute inv = inverse ?? new ReferencesAttribute(fkey.PropertyNames);
                 ForeignKeyConstraint info = new ForeignKeyConstraint(this, property.Name, parentType, fkey, inv);  
                 foreignKeys.Add(info);
 
                 // Foreign keys cannot be an alias for RowID!
-                if (RowIdColumn != null && info.ForeignKey.Attributes.Contains(RowIdColumn.ColumnName))
+                if (RowIdColumn != null && info.ForeignKey.PropertyNames.Contains(RowIdColumn.Property.Name))
                 {
                     RowIdColumn = null;
                 }
@@ -345,32 +345,6 @@ namespace CrossLite
                 throw new Exception("Entity type \"" + EntityType.Name + "\" does not contain a definition for \"" + propertyName + "\"");
 
             return EntityProperties[propertyName];
-        }
-
-        /// <summary>
-        /// Retrieves a set of property names corresponding to the specified column names.
-        /// </summary>
-        /// <remarks>This method maps column names to their corresponding property names based on the
-        /// entity's column-to-property mapping. If a column name is not found in the mapping, an <see
-        /// cref="EntityException"/> is thrown.</remarks>
-        /// <param name="columns">A collection of column names to map to property names.</param>
-        /// <returns>A <see cref="HashSet{T}"/> containing the names of the properties associated with the specified columns.</returns>
-        /// <exception cref="EntityException">Thrown if any column in <paramref name="columns"/> does not exist in the entity.</exception>
-        public HashSet<string> GetPropertiesFromColumns(IEnumerable<string> columns)
-        {
-            HashSet<string> props = new HashSet<string>();
-            foreach (string col in columns)
-            {
-                if (DatabaseColumns.ContainsKey(col))
-                {
-                    props.Add(DatabaseColumns[col].Property.Name);
-                }
-                else
-                {
-                    throw new EntityException($"Column '{col}' does not exist in entity '{EntityType.Name}'");
-                }
-            }
-            return props;
         }
         
         /// <summary>
@@ -418,26 +392,25 @@ namespace CrossLite
         }
 
         /// <summary>
-        /// Retrieves a dictionary of foreign key column mappings for the specified entity type.
+        /// Retrieves a mapping of foreign key property names to their corresponding parent entity property names for
+        /// the specified entity type.
         /// </summary>
-        /// <remarks>This method identifies foreign key relationships for the specified entity type by
-        /// examining the foreign key metadata. The returned dictionary maps each foreign key column in the child entity
-        /// to its corresponding column in the parent entity.</remarks>
-        /// <typeparam name="T">The type of the entity for which foreign key mappings are retrieved.</typeparam>
-        /// <param name="EnityType">An instance of the entity type. This parameter is not used internally but provides type context for the
-        /// operation.</param>
-        /// <returns>A dictionary where the keys represent the foreign key column names in the child entity,  and the values
-        /// represent the corresponding column names in the parent entity.</returns>
-        public Dictionary<string, string> GetForeignKeyColumnMappingsTo<T>()
+        /// <remarks>This method filters the foreign key mappings to include only those that reference the
+        /// specified parent entity type <typeparamref name="T"/>. The resulting dictionary provides a mapping of child
+        /// entity property names to their parent entity counterparts.</remarks>
+        /// <typeparam name="T">The type of the parent entity for which the foreign key mappings are retrieved.</typeparam>
+        /// <returns>A dictionary where the keys are the foreign key property names in the current entity, and the values are the
+        /// corresponding property names in the parent entity.</returns>
+        public Dictionary<string, string> GetForeignKeyPropertyMappingsTo<T>()
         {
             Dictionary<string, string> foreignKeys = new Dictionary<string, string>();
             foreach (var fk in ForeignKeys.Where(x => x.ParentEntityType == typeof(T)))
             {
-                for (int i = 0; i < fk.ForeignKey.Attributes.Length; i++)
+                for (int i = 0; i < fk.ForeignKey.PropertyNames.Length; i++)
                 {
                     // Get the foreign key attribute name
-                    string childColName = fk.ForeignKey.Attributes[i];
-                    string parentColName = fk.Reference.Attributes[i];
+                    string childColName = fk.ForeignKey.PropertyNames[i];
+                    string parentColName = fk.Reference.PropertyNames[i];
 
                     // Add the foreign key column name and the parent table name
                     foreignKeys[childColName] = parentColName;

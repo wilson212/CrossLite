@@ -12,12 +12,13 @@ __Please bear with me as I complete this Readme, it is still a work in progress_
 - [CodeFirst Entity](#codefirst-entity)
 
 #### Requirements
- * System.Data.SQLite.Core v1.0.103.0
- * Microsoft .NET 4.6.1 or newer
+ * Castle.Core 5.2.1
+ * Microsoft.Data.Sqlite 9.0.8
+ * Microsoft .NET 8
 
 #### Basic Read Query Example
 ```C#
-var builder = new SQLiteConnectionStringBuilder() { DataSource = filePath };
+var builder = new SqliteConnectionStringBuilder() { DataSource = filePath };
 using (var context = new SQLiteContext(builder))
 {
     // Open the database connection
@@ -42,17 +43,18 @@ using CrossLite;
 
 namespace CrossLiteExample
 {
-    public class Account
+    public class Account : EntityBase
     {
         [Column]
-        public int Id { get; set; }
+        public virtual int Id { get; set; }
 
         [Column]
-        public string Name { get; set; }
+        public virtual string Name { get; set; }
     }
 }
 ```
 The `[Column]` attribute tells the Entity Translator that the properties "Id" and "Name" are mapped to the same named columns on the table "Account". You can optionally put the table's column name in the Column attribute if it differs from that in the table (`[Column("name")]`). Lets have a look at a Non query next.
+All entities must extend from the abstract EntityBase class, for dirty property tracking. All column, foreign key and childset properties must also be marked Virtual.
 
 #### Basic Insert Query
 ```C#
@@ -94,7 +96,8 @@ using (var context = new DerivedContext(builder))
     context.Connect();
     
     // Insert some dummy data
-    Account entity = new Account() { Name = "Steve" };
+    Account entity = context.CreateEntity<Account>(); // You can also use "context.Accounts.Create();"
+	entity.Name = "Steve";
     context.Accounts.Add(entity);
     
     // Update the data
@@ -135,7 +138,7 @@ What is CodeFirst? CodeFirst is a set of features that allows you to design your
 using CrossLite;
 using CrossLite.CodeFirst;
 
-var builder = new SQLiteConnectionStringBuilder() { DataSource = filePath };
+var builder = new SqliteConnectionStringBuilder() { DataSource = filePath };
 using (var context = new DerivedContext(builder))
 {
     // Drop table
@@ -156,36 +159,30 @@ using CrossLite.CodeFirst;
 
 namespace MyProject
 {
-    [Table("Account")]
-    public class Account
+    [Table]
+    public class Account : EntityBase
     {
         [Column, PrimaryKey]
-        public int Id { get; set; }
+        public virtual int Id { get; set; }
 
         [Column, Required, Collation(Collation.NoCase)]
-        public string Name { get; set; }
+        public virtual string Name { get; set; }
         
         [Column]
-        public int RoleId { get; set; }
+        public virtual int RoleId { get; set; }
 
         /// <summary>
         /// A lazy loaded enumeration that fetches all Privilages
         /// that are bound by the foreign key and this Account.Id.
         /// </summary>
-        /// <remarks>
-        /// Everytime this object gets enumerated, a new database 
-        /// connection will be opened, and queried.
-        /// </remarks>
-        public virtual IEnumerable<UserPrivilege> Privilages { get; set; }
+        public virtual EntitySet<UserPrivilege> Privilages { get; set; }
         
         /// <summary>
-        /// Using "Fetch()" on this lazy loading class will retrieve
-        /// the "UserRole" object where UserRole.Id equals this Account.RoleId.
+        /// The "UserRole" object where UserRole.Id equals this Account.RoleId.
         /// </summary>
-        [InverseKey("Id")]
         [ForeignKey("RoleId")]
-        public virtual ForeignKey<UserRole> Role { get; set; }
+		[References("Id", OnDelete = ReferentialIntegrity.Cascade)]  
+        public virtual UserRole Role { get; set; }
     }
 }
 ```
-Notice how the Foreign key relation properties are marked as Virtual. In order for the Entity Translator to be able to understand how to properly design its virtual table, these foreign key properties need to be marked virtual. If you do not wish to use CodeFirst Foreign Key support, simply exclude those virtual properties!

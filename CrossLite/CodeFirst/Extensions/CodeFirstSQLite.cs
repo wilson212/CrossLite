@@ -119,11 +119,11 @@ namespace CrossLite.CodeFirst
             // -----------------------------------------
             // Composite Keys
             // -----------------------------------------
-            string[] keys = table.PrimaryKeys.ToArray();
+            string[] keys = table.PrimaryKeys.Select(x => context.QuoteIdentifier(x.ColumnName)).ToArray();
             if (!table.HasRowIdAlias && keys.Length > 0)
             {
                 sql.Append($"\tPRIMARY KEY(");
-                sql.Append(String.Join(", ", keys.Select(context.QuoteIdentifier)));
+                sql.Append(String.Join(", ", keys));
                 sql.AppendLine("),");
             }
 
@@ -144,8 +144,8 @@ namespace CrossLite.CodeFirst
             {
                 // Primary table attributes
                 ForeignKeyAttribute fk = info.ForeignKey;
-                string attrs1 = String.Join(", ", fk.Attributes.Select(context.QuoteIdentifier));
-                string attrs2 = String.Join(", ", info.Reference.Attributes.Select(context.QuoteIdentifier));
+                string attrs1 = String.Join(", ", info.GetForeignKeyColumnNames().Select(context.QuoteIdentifier));
+                string attrs2 = String.Join(", ", info.GetReferenceColumnNames().Select(context.QuoteIdentifier));
 
                 // Build sql command
                 TableMapping map = EntityCache.GetTableMap(info.ParentEntityType);
@@ -197,7 +197,7 @@ namespace CrossLite.CodeFirst
                 sql.Append($" ON {context.QuoteIdentifier(table.TableName)}(");
 
                 // Append columns
-                sql.Append(String.Join(", ", index.Columns.Select(context.QuoteIdentifier)));
+                sql.Append(String.Join(", ", index.Properties.Select(context.QuoteIdentifier)));
                 sql.Append(')');
 
                 // Execute

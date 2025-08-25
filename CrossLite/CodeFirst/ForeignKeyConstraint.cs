@@ -1,6 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 
 namespace CrossLite.CodeFirst
 {
@@ -48,10 +48,10 @@ namespace CrossLite.CodeFirst
         /// <param name="foreignKey"></param>
         /// <param name="inverseKey"></param>
         public ForeignKeyConstraint(
-            TableMapping child, 
-            string childPropertyName, 
-            Type parentType, 
-            ForeignKeyAttribute foreignKey, 
+            TableMapping child,
+            string childPropertyName,
+            Type parentType,
+            ForeignKeyAttribute foreignKey,
             ReferencesAttribute inverseKey)
         {
             this.ForeignKey = foreignKey;
@@ -62,16 +62,53 @@ namespace CrossLite.CodeFirst
 
             // Ensure the parent and child have the specified properties
             TableMapping parent = EntityCache.GetTableMap(parentType);
-            var invalid = inverseKey.Attributes.Except(parent.DatabaseColumns.Keys);
-            if (invalid.Count() > 0)
+            var invalid = inverseKey.PropertyNames.Except(parent.EntityProperties.Keys);
+            if (invalid.Any())
             {
                 throw new EntityException($"Parent Entity does not contain an attribute named \"{invalid.First()}\"");
             }
-            invalid = foreignKey.Attributes.Except(child.DatabaseColumns.Keys);
-            if (invalid.Count() > 0)
+            invalid = foreignKey.PropertyNames.Except(child.EntityProperties.Keys);
+            if (invalid.Any())
             {
                 throw new EntityException($"Child Entity \"{ChildEntityType}\" does not contain an attribute named \"{invalid.First()}\"");
             }
+        }
+
+        /// <summary>
+        /// Retrieves the set of column names that correspond to the reference attributes of the parent entity.
+        /// </summary>
+        /// <remarks>This method collects the column names associated with the reference attributes of the
+        /// parent entity type as defined in the table mapping. The returned set contains unique column names.</remarks>
+        /// <returns>A <see cref="HashSet{T}"/> containing the column names corresponding to the reference attributes. The set
+        /// will be empty if no reference attributes are defined.</returns>
+        public HashSet<string> GetReferenceColumnNames()
+        {
+            var returnSet = new HashSet<string>();
+            TableMapping parent = EntityCache.GetTableMap(ParentEntityType);
+            foreach (var attr in Reference.PropertyNames)
+            {
+                returnSet.Add(parent.EntityProperties[attr].ColumnName);
+            }
+
+            return returnSet;
+        }
+
+        /// <summary>
+        /// Retrieves the names of the foreign key columns associated with the child entity type.
+        /// </summary>
+        /// <remarks>This method uses the child entity type and the foreign key attributes to determine
+        /// the corresponding column names.</remarks>
+        /// <returns>A <see cref="HashSet{T}"/> containing the names of the foreign key columns. The set will be empty if no
+        /// foreign key columns are defined.</returns>
+        public HashSet<string> GetForeignKeyColumnNames()
+        {
+            var returnSet = new HashSet<string>();
+            TableMapping child = EntityCache.GetTableMap(ChildEntityType);
+            foreach (var attr in ForeignKey.PropertyNames)
+            {
+                returnSet.Add(child.EntityProperties[attr].ColumnName);
+            }
+            return returnSet;
         }
     }
 }

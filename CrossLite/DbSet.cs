@@ -240,10 +240,9 @@ namespace CrossLite
                 var builder = new DeleteQueryBuilder(Context).From(EntityTable.TableName);
 
                 // build the where statement, using primary keys only
-                foreach (string keyName in EntityTable.PrimaryKeys)
+                foreach (var attr in EntityTable.PrimaryKeys)
                 {
-                    PropertyInfo info = EntityTable.DatabaseColumns[keyName].Property;
-                    builder.Where(keyName, Comparison.Equals, new SqlLiteral($"@{keyName}"));
+                    builder.Where(attr.ColumnName, Comparison.Equals, new SqlLiteral($"@{attr.ColumnName}"));
                 }
 
                 DeleteQuery = new PreparedNonQuery(builder.BuildCommand());
@@ -290,12 +289,14 @@ namespace CrossLite
         /// </exception>
         public bool Update(TEntity obj)
         {
+            // Convert primary keys to string names for easy lookup
+            var primaryKeys = EntityTable.PrimaryKeys.Select(x => x.Property.Name).ToHashSet();
+
             // Ensure that we are in a modified state before checking for dirty properties
             if (obj.State == EntityState.Modified)
             {
                 // Ensure that the primary key or composite key is not modified
-                var dirtyColumns = EntityTable.GetColumnsFromProperties(obj.DirtyProperties);
-                if (EntityTable.PrimaryKeys.Intersect(dirtyColumns).Any())
+                if (primaryKeys.Intersect(obj.DirtyProperties).Any())
                 {
                     throw new InvalidOperationException("Cannot update an entity with modified primary key(s).");
                 }
@@ -314,11 +315,11 @@ namespace CrossLite
                     PropertyInfo info = attribute.Value.Property;
 
                     // Keys go in the WHERE statement, not the SET statement
-                    if (EntityTable.PrimaryKeys.Contains(attribute.Key))
+                    if (primaryKeys.Contains(info.Name))
                     {
                         updateQuery.Where(attribute.Key, Comparison.Equals, info.GetValue(obj));
                     }
-                    else if (obj.DirtyProperties.Contains(attribute.Value.Property.Name))
+                    else if (obj.DirtyProperties.Contains(info.Name))
                     {
                         updateQuery.Set(attribute.Key, info.GetValue(obj));
                     }
@@ -354,11 +355,10 @@ namespace CrossLite
             query.From(EntityTable.TableName).SelectAll().Take(1);
 
             // Grab the primary keys
-            foreach (string colName in EntityTable.PrimaryKeys)
+            foreach (var attribute in EntityTable.PrimaryKeys)
             {
                 // Add column expression
-                AttributeInfo attribute = EntityTable.GetAttributeByColumnName(colName);
-                query.Where(colName, Comparison.Equals, attribute.Property.GetValue(entity));
+                query.Where(attribute.ColumnName, Comparison.Equals, attribute.Property.GetValue(entity));
             }
 
             // Create command
@@ -396,13 +396,12 @@ namespace CrossLite
             WhereStatement where = new WhereStatement(Context);
 
             // build the where statement, using primary keys
-            foreach (string keyName in EntityTable.PrimaryKeys)
+            foreach (var attr in EntityTable.PrimaryKeys)
             {
-                PropertyInfo info = EntityTable.DatabaseColumns[keyName].Property;
-                object val = info.GetValue(obj);
+                object val = attr.Property.GetValue(obj);
 
                 // Add value to where statement
-                where.And(keyName, Comparison.Equals, val);
+                where.And(attr.ColumnName, Comparison.Equals, val);
             }
 
             return Contains(EntityTable.TableName, where);
@@ -472,7 +471,7 @@ namespace CrossLite
             var query = new SelectQueryBuilder(Context)
                 .From(EntityTable.TableName)
                 .SelectAll()
-                .Where(primaryKey, Comparison.Equals, id)
+                .Where(primaryKey.ColumnName, Comparison.Equals, id)
                 .Take(1);
 
             // Create command
@@ -505,7 +504,7 @@ namespace CrossLite
 
             // build the where statement, using primary keys
             int i = 0;
-            foreach (string keyName in EntityTable.PrimaryKeys)
+            foreach (var attr in EntityTable.PrimaryKeys)
             {
                 // Grab value
                 var value = keyValues[i];
@@ -513,8 +512,7 @@ namespace CrossLite
                     throw new ArgumentNullException(nameof(value), "A primary key value cannot be null.");
 
                 // Add value to where statement
-                PropertyInfo info = EntityTable.DatabaseColumns[keyName].Property;
-                query.Where(keyName, Comparison.Equals, value);
+                query.Where(attr.ColumnName, Comparison.Equals, value);
                 i++;
             }
 

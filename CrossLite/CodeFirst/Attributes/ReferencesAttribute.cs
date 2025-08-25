@@ -13,7 +13,7 @@ namespace CrossLite.CodeFirst
         /// <summary>
         /// Gets an array of parent attribute names on a foreign key constraint
         /// </summary>
-        public string[] Attributes { get; protected set; }
+        public string[] PropertyNames { get; protected set; }
 
         /// <summary>
         /// Gets the <see cref="ReferentialIntegrity"/> for this key restraint 
@@ -33,7 +33,7 @@ namespace CrossLite.CodeFirst
         /// <param name="attributes">The Parent Entity column name(s) in the parent table.</param>
         public ReferencesAttribute(params string[]  attributes)
         {
-            this.Attributes = attributes;
+            this.PropertyNames = attributes;
         }
     }
 }
