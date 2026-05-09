@@ -12,7 +12,7 @@ namespace CrossLite.QueryBuilder
     /// By using the BuildCommand() method, all parameters in the WHERE statement will be 
     /// escaped by the underlaying SQLiteCommand object, making the Execute() method SQL injection safe.
     /// </remarks>
-    public class DeleteQueryBuilder
+    public class DeleteQueryBuilder : IDisposable
     {
         /// <summary>
         /// The SQLiteContext attached to this builder
@@ -83,53 +83,59 @@ namespace CrossLite.QueryBuilder
         }
 
         /// <summary>
-        /// Builds the query string with the current SQL Statement, and returns
-        /// the querystring. This method is NOT Sql Injection safe!
+        /// Constructs a DELETE SQL query string based on the specified table and WHERE conditions.
         /// </summary>
-        /// <returns></returns>
-        public string BuildQuery() => BuildQuery(false) as String;
+        /// <returns>
+        /// A string representation of a DELETE SQL query.
+        /// </returns>
+        public string BuildQuery() => BuildSql(null);
 
         /// <summary>
-        /// Builds the query string with the current SQL Statement, and
-        /// returns the DbCommand to be executed. All WHERE paramenters
-        /// are propery escaped, making this command SQL Injection safe.
+        /// Builds a <see cref="SqliteCommand"/> representing the DELETE SQL query with all necessary parameters.
         /// </summary>
-        /// <returns></returns>
-        public SqliteCommand BuildCommand() => BuildQuery(true) as SqliteCommand;
-
-        /// <summary>
-        /// Builds the query string or DbCommand
-        /// </summary>
-        /// <param name="buildCommand"></param>
-        /// <returns></returns>
-        protected object BuildQuery(bool buildCommand)
+        /// <returns>Returns a <see cref="SqliteCommand"/> configured with the SQL query and associated parameters for execution.</returns>
+        public SqliteCommand BuildCommand()
         {
-            // Make sure we have a valid DB driver
-            if (buildCommand && Context == null)
-                throw new Exception("Cannot build a command when the Context hasn't been specified. Call SetContext first.");
+            var parameters = new List<SqliteParameter>();
+            string sql = BuildSql(parameters);
+            var command = Context.CreateCommand(sql);
+            
+            foreach (var p in parameters)
+                command.Parameters.Add(p);
+            
+            return command;
+        }
 
-            // Make sure we have a table name
+        /// <summary>
+        /// Constructs a SQL DELETE statement based on the specified table and WHERE clause.
+        /// Optionally adds parameterized values for the WHERE clause if a parameter collection is provided.
+        /// </summary>
+        /// <param name="parameters">A collection of <see cref="SqliteParameter"/> objects to hold
+        /// the parameterized values used in the WHERE clause. Can be null if no parameters are required.</param>
+        /// <returns>A string containing the SQL DELETE statement.</returns>
+        /// <exception cref="Exception">Thrown if the <see cref="SQLiteContext"/> is not set
+        /// or if the table name is not specified.</exception>
+        private string BuildSql(List<SqliteParameter> parameters)
+        {
+            if (Context == null)
+                throw new Exception(
+                    "Cannot build a command when the Context hasn't been specified. Call SetContext first.");
+
             if (String.IsNullOrWhiteSpace(Table))
                 throw new Exception("Table to update was not set.");
 
-            // Start Query
-            var query = new StringBuilder($"DELETE FROM {Context.QuoteIdentifier(Table)}", 128);
-            var parameters = new List<SqliteParameter>();
+            var query = new StringBuilder("DELETE FROM ", 128);
+            query.Append(Context.QuoteIdentifier(Table));
 
-            // Append Where
             if (WhereStatement.HasClause)
-                query.Append(" WHERE " + WhereStatement.BuildStatement(parameters));
-
-            // Create Command
-            SqliteCommand command = null;
-            if (buildCommand)
             {
-                command = Context.CreateCommand(query.ToString());
-                command.Parameters.AddRange(parameters.ToArray());
+                query.Append(" WHERE ");
+                query.Append(parameters != null
+                    ? WhereStatement.BuildStatement(parameters)
+                    : WhereStatement.BuildStatement());
             }
 
-            // Return Result
-            return (buildCommand) ? command as object : query.ToString();
+            return query.ToString();
         }
 
         /// <summary>
@@ -141,5 +147,7 @@ namespace CrossLite.QueryBuilder
             using (SqliteCommand command = BuildCommand())
                 return command.ExecuteNonQuery();
         }
+
+        public void Dispose() { }
     }
 }

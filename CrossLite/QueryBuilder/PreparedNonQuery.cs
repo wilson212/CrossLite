@@ -85,12 +85,9 @@ namespace CrossLite.QueryBuilder
         /// <param name="entityTable"></param>
         public void SetParameters<T>(T obj, TableMapping entityTable) where T : EntityBase
         {
-            // Generate the SQL
             foreach (var attribute in entityTable.DatabaseColumns)
             {
-                // Keys go in the WHERE statement, not the SET statement
-                PropertyInfo info = attribute.Value.Property;
-                SetParam($"@{attribute.Key}", info.GetValue(obj));
+                SetParam(attribute.Value.ParameterName, attribute.Value.GetValue(obj));
             }
         }
 

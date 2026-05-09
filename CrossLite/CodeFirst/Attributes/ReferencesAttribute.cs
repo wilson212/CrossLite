@@ -16,16 +16,16 @@ namespace CrossLite.CodeFirst
         public string[] PropertyNames { get; protected set; }
 
         /// <summary>
-        /// Gets the <see cref="ReferentialIntegrity"/> for this key restraint 
+        /// Gets the <see cref="ReferentialAction"/> for this key restraint 
         /// when a row in the parent table is deleted
         /// </summary>
-        public ReferentialIntegrity OnDelete { get; set; } = ReferentialIntegrity.NoAction;
+        public ReferentialAction OnDelete { get; set; } = ReferentialAction.NoAction;
 
         /// <summary>
-        /// Gets the <see cref="ReferentialIntegrity"/> for this key restraint 
+        /// Gets the <see cref="ReferentialAction"/> for this key restraint 
         /// when a row in the parent table is updated
         /// </summary>
-        public ReferentialIntegrity OnUpdate { get; set; } = ReferentialIntegrity.NoAction;
+        public ReferentialAction OnUpdate { get; set; } = ReferentialAction.NoAction;
 
         /// <summary>
         /// Creates a new instance of <see cref="ReferencesAttribute"/>

@@ -1,6 +1,7 @@
 ﻿using CrossLite.QueryBuilder;
 using Microsoft.Data.Sqlite;
 using System;
+using System.Linq;
 
 namespace CrossLite.CodeFirst
 {
@@ -14,7 +15,7 @@ namespace CrossLite.CodeFirst
     /// values and to fetch the parent entity from the database.</remarks>
     /// <typeparam name="TParentEntity">The type of the parent entity. Must inherit from <see cref="EntityBase"/>.</typeparam>
     /// <typeparam name="TChildEntity">The type of the child entity. Must inherit from <see cref="EntityBase"/> and have a parameterless constructor.</typeparam>
-    internal class ForeignEntityLoader<TParentEntity, TChildEntity> 
+    internal class ForeignEntityLoader<TParentEntity, TChildEntity>  : IEntityFetcher
         where TParentEntity : EntityBase, new()
         where TChildEntity : EntityBase, new()
     {
@@ -71,7 +72,7 @@ namespace CrossLite.CodeFirst
             Type parentType = typeof(TParentEntity);
 
             // Grab mapping and foreign info from child entity
-            ChildTable = EntityCache.GetTableMap(childType);
+            ChildTable = TableCache.GetTableMap(childType);
             Constraint = constraint;
 
             // Make sure the user set their code up correctly
@@ -106,10 +107,10 @@ namespace CrossLite.CodeFirst
 
                 // Get the value of the child attribute on this Entity instance
                 AttributeInfo info = ChildTable.GetAttributeByPropertyName(childPropName);
-                object val = info.Property.GetValue(ChildEntity);
+                object val = info.GetValue(ChildEntity);
 
                 // Add the key => value to the where statement
-                var parentTable = EntityCache.GetTableMap(typeof(TParentEntity));
+                var parentTable = TableCache.GetTableMap(typeof(TParentEntity));
                 string parentColName = parentTable.GetAttributeByPropertyName(parentPropName).ColumnName;
                 Statement.And(parentColName, Comparison.Equals, val);
             }
@@ -120,66 +121,77 @@ namespace CrossLite.CodeFirst
         /// that this Child Entity instance is bound to.
         /// </summary>
         /// <returns></returns>
-        public TParentEntity Fetch()
+        public object Fetch()
         {
-            // Get our Table Mapping
             Type objType = typeof(TParentEntity);
-            TableMapping table = EntityCache.GetTableMap(objType);
+            TableMapping table = TableCache.GetTableMap(objType);
 
-            SQLiteContext context = null;
             bool wasOpen = false;
+            SQLiteContext context = LazyLoad(ref wasOpen);
 
-            if (Context.IsConnected())
+            // Build the SQL query using your builder
+            SelectQueryBuilder builder = new SelectQueryBuilder(context);
+            builder.From(table.TableName).SelectAll().Take(1);
+            builder.WhereStatement = Statement;
+
+            try
+            {
+                using (SqliteCommand command = builder.BuildCommand())
+                using (SqliteDataReader reader = command.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        reader.Read();
+
+                        // 1. Resolve PK ordinals once for the identity check
+                        int[] pkOrdinals = null;
+                        if (context.UseIdentityMapping && table.PrimaryKeys.Count > 0)
+                        {
+                            pkOrdinals = table.PrimaryKeys
+                                .Select(pk => reader.GetOrdinal(pk.ColumnName))
+                                .ToArray();
+                        }
+
+                        // 2. Return via ConvertToEntity to ensure the Identity Map is checked
+                        return context.ConvertToEntity<TParentEntity>(table, reader, pkOrdinals);
+                    }
+                    return null;
+                }
+            }
+            finally
+            {
+                // Ensure the context is disposed only if we opened it locally
+                if (!wasOpen)
+                {
+                    context.Dispose();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Lazily initializes and retrieves a database context for the current operation.
+        /// </summary>
+        /// <param name="wasOpen">Indicates if the context was already open.</param>
+        /// <returns>The active SQLiteContext.</returns>
+        protected SQLiteContext LazyLoad(ref bool wasOpen)
+        {
+            SQLiteContext context = null;
+            wasOpen = false;
+
+            // Use the existing context if it's connected
+            if (Context != null && Context.IsConnected())
             {
                 wasOpen = true;
                 context = Context;
             }
             else
             {
-                // Open new connection
+                // Otherwise, open a new connection for this fetch
                 context = new SQLiteContext(ConnectionString);
                 context.Connect();
             }
 
-            // Build the SQL query
-            SelectQueryBuilder builder = new SelectQueryBuilder(context);
-            builder.From(table.TableName).SelectAll().Take(1);
-            builder.WhereStatement = Statement;
-
-            // Execute the Data Reader
-            if (wasOpen)
-            {
-                using (SqliteCommand command = builder.BuildCommand())
-                using (SqliteDataReader reader = command.ExecuteReader())
-                {
-                    // If we have rows, add them to the list
-                    if (reader.HasRows)
-                    {
-                        // Return each row
-                        reader.Read();
-                        return context.ConvertToEntity<TParentEntity>(table, reader);
-                    }
-                    else
-                        return null;
-                }
-            }
-            else
-            {
-                using(context) // Ensure context get disposed correctly
-                using (SqliteCommand command = builder.BuildCommand())
-                using (SqliteDataReader reader = command.ExecuteReader())
-                {
-                    // If we have rows, add them to the list
-                    if (reader.HasRows)
-                    {
-                        // Return the first row
-                        reader.Read();
-                        return context.ConvertToEntity<TParentEntity>(table, reader);
-                    }
-                    else
-                        return null;
-                }
-            }
+            return context;
         }
     }
 }

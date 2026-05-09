@@ -2,240 +2,342 @@
 using CrossLite.CodeFirst;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace CrossLite
 {
     /// <summary>
-    /// Intercepts method calls on proxied entities to enable dirty tracking for property setters  and lazy loading for
-    /// property getters.
+    /// A Castle DynamicProxy interceptor that hooks into every property get/set on a
+    /// proxied entity. It provides three core behaviors:
+    /// <list type="number">
+    ///   <item>Lazy-loading of parent navigation properties (foreign objects).</item>
+    ///   <item>Lazy-loading of child collection properties (entity sets).</item>
+    ///   <item>Dirty-tracking of scalar properties and cache invalidation of
+    ///         related navigation/collection caches when foreign-key columns change.</item>
+    /// </list>
     /// </summary>
-    /// <remarks>This class is designed to work with entities that inherit from <see cref="EntityBase"/> and 
-    /// provides the following functionality: <list type="bullet"> <item> <description> **Property Setters**: Tracks
-    /// changes to entity properties. If the property being set is a foreign key,  the corresponding foreign key columns
-    /// are updated, and the foreign object is cached for future comparisons.  Non-foreign key properties are added to
-    /// the entity's dirty properties list, and the entity's state is updated  to <see cref="EntityState.Modified"/> if
-    /// it was previously <see cref="EntityState.Fresh"/>. </description> </item> <item> <description> **Property
-    /// Getters**: Supports lazy loading of related entities or collections. For foreign key properties,  the related
-    /// entity is loaded and cached for subsequent accesses. For `EntitySet<T>` properties, the related  collection is
-    /// loaded and cached. </description> </item> </list> If the entity is in the <see cref="EntityState.Loading"/>
-    /// state, all operations are allowed to proceed  without interception.</remarks>
     internal class EntityInterceptor : IInterceptor
     {
         /// <summary>
-        /// Gets the <see cref="SQLiteContext"/> instance used to interact with the SQLite database.
+        /// The active database context used for lazy-load queries.
         /// </summary>
-        /// <remarks>This property provides access to the database context, which can be used to query or
-        /// manipulate data in the SQLite database. The context is typically initialized and managed by the containing
-        /// class.</remarks>
         protected SQLiteContext Context { get; }
 
         /// <summary>
-        /// Gets the mapping information for the database table associated with the current context.
+        /// The table mapping metadata for the entity type being intercepted.
         /// </summary>
         protected TableMapping Table { get; }
 
-        /// <summary>
-        /// Gets the cache of foreign objects, indexed by their string keys.
-        /// </summary>
-        /// <remarks>This property provides access to a cache of foreign objects, which can be used to
-        /// store and retrieve objects by their associated string keys.  The cache is read-only and cannot be modified
-        /// directly.</remarks>
-        protected Dictionary<string, object> ForeignObjectCache { get; }
+        // ── Lazy-initialized per-instance state ──
+        // These cost zero memory during the Ghost Run hydration phase
+        // (where State == Loading bypasses everything).
+
+        private Dictionary<string, object> _foreignObjectCache;
+        private Dictionary<string, object> _entitySetCache;
+        private HashSet<string> _loadedNavigationProperties;
 
         /// <summary>
-        /// Gets the cache of child entity sets, where each entry maps an entity set name to its corresponding object.
+        /// Cache for parent (foreign-object) navigation properties.
+        /// Key = the navigation property name (e.g. "ParentUnit").
+        /// Value = the loaded parent entity, or null if not yet loaded / explicitly null.
         /// </summary>
-        protected Dictionary<string, object> EntitySetCache { get; }
+        private Dictionary<string, object> ForeignObjectCache
+            => _foreignObjectCache ??= BuildForeignObjectCache();
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="EntityInterceptor"/> class, which provides caching and
-        /// relationship management for entities in the specified table.
+        /// Cache for child-collection navigation properties.
+        /// Key = the collection property name (e.g. "Soldiers").
+        /// Value = the materialised <c>ChildDbSet</c> instance, or null if not yet loaded.
         /// </summary>
-        /// <remarks>This constructor initializes caches for managing foreign key relationships and child
-        /// entity sets  based on the provided table's schema. The foreign object cache is pre-filled with null values
-        /// for  each foreign key property defined in the table mapping.</remarks>
-        /// <param name="context">The <see cref="SQLiteContext"/> instance that provides database access and context for the interceptor.</param>
-        /// <param name="table">The <see cref="TableMapping"/> that defines the schema and relationships for the table being intercepted.</param>
+        private Dictionary<string, object> EntitySetCache
+            => _entitySetCache ??= BuildEntitySetCache();
+
+        /// <summary>
+        /// Tracks which navigation properties have been resolved at least once,
+        /// distinguishing "loaded but null" from "never loaded".
+        /// </summary>
+        private HashSet<string> LoadedNavigationProperties
+            => _loadedNavigationProperties ??= new HashSet<string>();
+
+        /// <summary>
+        /// Provides interception logic for entities within a database context, enabling
+        /// the handling of related entity associations, navigation properties, and
+        /// state tracking. Utilized in conjunction with dynamic proxy generation to
+        /// extend entity behavior at runtime.
+        /// </summary>
         public EntityInterceptor(SQLiteContext context, TableMapping table)
         {
-            // Store context and table mapping
             Context = context;
             Table = table;
-            ForeignObjectCache = new Dictionary<string, object>(Table.ForeignKeys.Count);
-            EntitySetCache = new Dictionary<string, object>(Table.ChildRelationships.Count);
-
-            // Pre-fill foreign object cache with nulls for each foreign key property
-            foreach (var fk in Table.ForeignKeys)
-            {
-                ForeignObjectCache[fk.ChildPropertyName] = null;
-            }
-
-            // Pre-fill entity set cache with nulls for each child relationship
-            foreach (var rel in Table.ChildRelationships)
-            {
-                EntitySetCache[rel.Key.Name] = null;
-            }
+            // Zero heap allocations on startup — all state is lazy-initialized.
         }
 
         /// <summary>
-        /// Intercepts method calls on a proxied entity to enable dirty tracking for property setters and lazy loading
-        /// for property getters.
+        /// Builds the initial ForeignObjectCache, seeding every FK navigation property with null.
         /// </summary>
-        /// <remarks>This method is designed to handle property accessors (`get_` and `set_` methods) on
-        /// entities that inherit from <see cref="EntityBase"/>. For property setters, it tracks changes to the entity's
-        /// state and updates the dirty properties list. For property getters, it supports lazy loading of related
-        /// entities or collections.  - **Setters**: If the property being set is a foreign key, the corresponding
-        /// foreign key columns   are updated, and the foreign object is cached for future comparisons. If the property
-        /// is not a   foreign key, it is added to the dirty properties list, and the entity's state is updated to  
-        /// <see cref="EntityState.Modified"/> if it was previously <see cref="EntityState.Fresh"/>. - **Getters**: If
-        /// the property being accessed is a foreign key or an `EntitySet<T>`, the method   attempts to load the related
-        /// entity or collection. The loaded value is cached for subsequent   accesses.  If the entity is in the <see
-        /// cref="EntityState.Loading"/> state, all operations are allowed to proceed without interception.</remarks>
-        /// <param name="invocation">The invocation context containing details about the method being called, the proxy instance, and the
-        /// arguments passed to the method.</param>
-        /// <exception cref="Exception">Thrown if a foreign key property is not found in the table mapping during a setter operation.</exception>
+        private Dictionary<string, object> BuildForeignObjectCache()
+        {
+            var cache = new Dictionary<string, object>(Table.ForeignKeys.Count);
+            foreach (var fk in Table.ForeignKeys)
+            {
+                cache[fk.ChildPropertyName] = null;
+            }
+            return cache;
+        }
+
+        /// <summary>
+        /// Builds the initial EntitySetCache, seeding every child-collection property with null.
+        /// </summary>
+        private Dictionary<string, object> BuildEntitySetCache()
+        {
+            var cache = new Dictionary<string, object>(Table.ChildRelationships.Count);
+            foreach (var rel in Table.ChildRelationships)
+            {
+                cache[rel.Key.Name] = null;
+            }
+            return cache;
+        }
+
+        /// <summary>
+        /// Intercepts method calls on proxied entity objects, providing custom logic
+        /// for handling property getters and setters, as well as a passthrough for
+        /// non-property methods. Ensures proper handling of entity state tracking
+        /// during operations such as hydration, dirty-tracking, and caching.
+        /// </summary>
+        /// <param name="invocation">The intercepted method invocation, containing details of the
+        /// method being called, arguments supplied, and the proxied object instance.</param>
         public void Intercept(IInvocation invocation)
         {
             var entity = invocation.Proxy as EntityBase;
+
+            // While the ORM is hydrating the entity, let every set_ pass through
+            // untouched so we don't trigger dirty-tracking or cache logic.
             if (entity.State == EntityState.Loading)
             {
-                // If the entity is still loading, allow all operations to proceed without interception.
                 invocation.Proceed();
                 return;
             }
 
-            // --- Handle SETTERS for Dirty Tracking ---
-            if (invocation.Method.Name.StartsWith("set_"))
+            var methodName = invocation.Method.Name;
+            if (methodName.Length > 4 && methodName[3] == '_')
             {
-                // Add the property name to the entity's dirty list.
-                string propertyName = invocation.Method.Name[4..];
-
-                // Check if this is a foreign key property
-                if (ForeignObjectCache.ContainsKey(propertyName))
+                if (methodName[0] == 'g') // get_
                 {
-                    var info = Table.ForeignKeys.FirstOrDefault(fk => fk.ChildPropertyName == propertyName);
-                    if (info != null)
+                    // Fast-path: if the lazy caches haven't been initialized yet,
+                    // this property CAN'T be a navigation property — it's a scalar.
+                    // Skip all dictionary lookups and string slicing.
+                    if (_foreignObjectCache == null && _entitySetCache == null)
                     {
-                        // Get the value from the new foreign object
-                        var foreignObj = invocation.Arguments[0];
-                        var foreignKey = info.ForeignKey;
-                        var foreignTable = EntityCache.GetTableMap(info.ParentEntityType);
-
-                        // Update the foreign key columns on this entity
-                        for (int index = 0; index < foreignKey.PropertyNames.Length; index++)
-                        {
-                            // Get the attribute info for this foreign key column
-                            var propName = foreignKey.PropertyNames[index];
-                            var attrInfo = Table.GetAttributeByPropertyName(propName);
-                            if (attrInfo != null)
-                            {
-                                // Set the foreign key id property on this entity
-                                var foreignAttrInfo = foreignTable.GetAttributeByPropertyName(info.Reference.PropertyNames[index]);
-                                var foreignValue = foreignAttrInfo.Property.GetValue(foreignObj);
-
-                                // This will recusively call this interceptor, but since it's not a foreign key property,
-                                // it will just add it to the dirty list.
-                                attrInfo.Property.SetValue(entity, foreignValue);
-                            }
-                        }
-
-                        // Store the loaded value for comparison later
-                        ForeignObjectCache[propertyName] = foreignObj;
-                    }
-                    else
-                    {
-                        // If we are here, something went very wrong
-                        throw new Exception("Foreign key property info not found in table mapping.");
-                    }
-                }
-                else if (EntitySetCache.ContainsKey(propertyName))
-                {
-                    // Future implementation for EntitySet<T> properties
-                    invocation.Proceed();
-                    return;
-                }
-                else
-                {
-                    entity.DirtyProperties.Add(propertyName);
-                }
-
-                // If the entity was Fresh, mark it as Modified.
-                if (entity.State == EntityState.Fresh)
-                {
-                    entity.State = EntityState.Modified;
-                }
-            }
-            // --- Handle GETTERS for Lazy Loading ---
-            else if (invocation.Method.Name.StartsWith("get_"))
-            {
-                string propertyName = invocation.Method.Name[4..];
-
-                // Is this a foreign key property?
-                if (!ForeignObjectCache.TryGetValue(propertyName, out object value))
-                {
-                    // Check for EntitySet<T> properties here for future implementation
-                    if (EntitySetCache.ContainsKey(propertyName))
-                    {
-                        // If we have a loaded value, return it directly
-                        if (EntitySetCache[propertyName] != null)
-                        {
-                            invocation.ReturnValue = EntitySetCache[propertyName];
-                            return;
-                        }
-
-                        // -- Load the Child Entities into an EntitySet<T> --
-
-                        // Check if foreign key properties are dirty; if so, we cannot load the child entities
-                        var childTable = EntityCache.GetTableMap(Table.ChildRelationships.First(r => r.Key.Name == propertyName).Value);
-                        foreach (var fk in childTable.ForeignKeys.Where(fk => fk.ParentEntityType == Table.EntityType))
-                        {
-                            var isDirty = fk.ForeignKey.PropertyNames.Any(entity.DirtyProperties.Contains);
-                            if (isDirty)
-                            {
-                                // Cannot load child entities if foreign key properties are dirty
-                                invocation.ReturnValue = null;
-                                return;
-                            }
-                        }
-
-                        // Create a new EntitySet<T> instance and load it
-                        var item = Table.ChildRelationships.FirstOrDefault(r => r.Key.Name == propertyName);
-                        var entitySetType = typeof(ChildDbSet<,>).MakeGenericType(Table.EntityType, item.Value);
-                        var entitySetInstance = Activator.CreateInstance(entitySetType, [entity, item.Key, Context]);
-
-                        // Cache the loaded EntitySet<T>
-                        EntitySetCache[propertyName] = entitySetInstance;
-                        invocation.ReturnValue = entitySetInstance;
+                        invocation.Proceed();
                         return;
                     }
-                }
-                else if (value == null)
-                {
-                    // Load the foreign object
-                    var foreignKey = Table.ForeignKeys.FirstOrDefault(fk => fk.ChildPropertyName == propertyName);
-                    var loaderType = typeof(ForeignEntityLoader<,>).MakeGenericType(foreignKey.ParentEntityType, Table.EntityType);
-                    dynamic loaderInstance = Activator.CreateInstance(loaderType, [entity, foreignKey, Context]);
 
-                    // If we have a loaded value, return it directly
-                    value = loaderInstance.Fetch();
-                    ForeignObjectCache[propertyName] = value;
-                    invocation.ReturnValue = value;
-                    return;
+                    HandleGetter(invocation, entity);
+                }
+                else if (methodName[0] == 's') // set_
+                {
+                    HandleSetter(invocation, entity);
                 }
                 else
                 {
-                    // Return the cached foreign object
-                    invocation.ReturnValue = value;
-                    return;
+                    invocation.Proceed();
+                }
+            }
+            else
+            {
+                // Non-property method (e.g. ToString, Equals) — pass through.
+                invocation.Proceed();
+            }
+        }
+
+        /// <summary>
+        /// Handles the property setter operation for the intercepted entity.
+        /// </summary>
+        private void HandleSetter(IInvocation invocation, EntityBase entity)
+        {
+            string propertyName = invocation.Method.Name[4..];
+
+            // ── Case 1: Setting a parent navigation property (e.g. entity.Parent = x) ──
+            if (ForeignObjectCache.ContainsKey(propertyName))
+            {
+                SetForeignNavigationProperty(invocation, entity, propertyName);
+            }
+            // ── Case 2: Setting a child-collection property — just pass through ──
+            else if (EntitySetCache.ContainsKey(propertyName))
+            {
+                invocation.Proceed();
+                return; // Skip state transition below; collection assignment is benign.
+            }
+            // ── Case 3: Setting a plain scalar / FK-column property ──
+            else
+            {
+                SetScalarProperty(invocation, entity, propertyName);
+            }
+
+            // Mark the entity as modified if it was previously clean.
+            if (entity.State == EntityState.Fresh)
+            {
+                entity.State = EntityState.Modified;
+            }
+        }
+
+        /// <summary>
+        /// When the user assigns a parent navigation property directly
+        /// (e.g. <c>soldier.Rank = newRank</c>), we back-fill the underlying
+        /// FK column(s) from the parent's PK and update the cache.
+        /// </summary>
+        private void SetForeignNavigationProperty(IInvocation invocation, EntityBase entity, string propertyName)
+        {
+            if (!Table.FkByChildProperty.TryGetValue(propertyName, out var info))
+                throw new Exception("Foreign key property info not found in table mapping.");
+
+            var foreignObj = invocation.Arguments[0];
+            var foreignKey = info.ForeignKey;
+            var foreignTable = TableCache.GetTableMap(info.ParentEntityType);
+
+            // Synchronize each FK column on this entity with the corresponding
+            // PK value from the assigned parent object.
+            for (int i = 0; i < foreignKey.PropertyNames.Length; i++)
+            {
+                var localAttr = Table.GetAttributeByPropertyName(foreignKey.PropertyNames[i]);
+                if (localAttr == null) continue;
+
+                object foreignValue = null;
+                if (foreignObj != null)
+                {
+                    var parentAttr = foreignTable.GetAttributeByPropertyName(info.Reference.PropertyNames[i]);
+                    foreignValue = parentAttr.GetValue(foreignObj);
+                }
+
+                localAttr.SetValue(entity, foreignValue);
+            }
+
+            // Update the cache so subsequent gets return the same instance.
+            ForeignObjectCache[propertyName] = foreignObj;
+            LoadedNavigationProperties.Add(propertyName);
+        }
+
+        /// <summary>
+        /// Handles a plain scalar or FK-column property being set.
+        /// Marks the property dirty and invalidates any navigation/collection
+        /// caches that depend on the changed column.
+        /// </summary>
+        private void SetScalarProperty(IInvocation invocation, EntityBase entity, string propertyName)
+        {
+            entity.DirtyProperties.Add(propertyName);
+
+            // If this column is part of a foreign key, invalidate the cached
+            // parent navigation property so the next get_ re-fetches it.
+            if (Table.FkByFkPropertyName.TryGetValue(propertyName, out var affectedParentFk))
+            {
+                ForeignObjectCache[affectedParentFk.ChildPropertyName] = null;
+                LoadedNavigationProperties.Remove(affectedParentFk.ChildPropertyName);
+            }
+
+            // If this column is a referenced PK that child collections depend on,
+            // invalidate those collection caches as well.
+            if (Table.ChildRelPropertyToEntitySetKeys.TryGetValue(propertyName, out var affectedKeys))
+            {
+                foreach (var key in affectedKeys)
+                {
+                    EntitySetCache[key] = null;
                 }
             }
 
-            // Allow the original getter/setter to run to update the value.
             invocation.Proceed();
-            return;
+        }
+
+        /// <summary>
+        /// Handles property getter invocations for proxied entities.
+        /// </summary>
+        private void HandleGetter(IInvocation invocation, EntityBase entity)
+        {
+            string propertyName = invocation.Method.Name[4..];
+
+            // ── Case 1: Getting a parent navigation property ──
+            if (ForeignObjectCache.ContainsKey(propertyName))
+            {
+                invocation.ReturnValue = GetForeignNavigationProperty(entity, propertyName);
+                return;
+            }
+
+            // ── Case 2: Getting a child-collection navigation property ──
+            if (EntitySetCache.ContainsKey(propertyName))
+            {
+                invocation.ReturnValue = GetEntitySetProperty(entity, propertyName);
+                return;
+            }
+
+            // ── Case 3: Plain scalar property — pass through to backing field ──
+            invocation.Proceed();
+        }
+
+        /// <summary>
+        /// Lazy-loads a parent entity via <see cref="ForeignEntityLoader{TParent,TChild}"/>
+        /// the first time the navigation property is accessed, then returns the
+        /// cached instance on subsequent calls.
+        /// </summary>
+        private object GetForeignNavigationProperty(EntityBase entity, string propertyName)
+        {
+            // Already resolved — return cached value (may be null).
+            if (LoadedNavigationProperties.Contains(propertyName))
+                return ForeignObjectCache[propertyName];
+
+            var fkInfo = Table.FkByChildProperty[propertyName];
+
+            // If any local FK column is null, the relationship is empty.
+            foreach (var localPropName in fkInfo.ForeignKey.PropertyNames)
+            {
+                var attr = Table.GetAttributeByPropertyName(localPropName);
+                if (attr.GetValue(entity) == null)
+                {
+                    ForeignObjectCache[propertyName] = null;
+                    LoadedNavigationProperties.Add(propertyName);
+                    return null;
+                }
+            }
+
+            // All FK columns are populated — issue a lazy-load query.
+            var loader = Table.ForeignLoaderFactories[propertyName](entity, fkInfo, Context);
+            object loadedValue = loader.Fetch();
+
+            ForeignObjectCache[propertyName] = loadedValue;
+            LoadedNavigationProperties.Add(propertyName);
+            return loadedValue;
+        }
+
+        /// <summary>
+        /// Lazy-loads a child collection via <see cref="ChildDbSet{TParent,TChild}"/>
+        /// the first time the collection property is accessed, then returns the
+        /// cached instance on subsequent calls. Returns null if the parent's PK
+        /// columns are dirty (unsaved), since the DB query would be stale.
+        /// </summary>
+        private object GetEntitySetProperty(EntityBase entity, string propertyName)
+        {
+            // Already materialised — return cached collection.
+            if (EntitySetCache[propertyName] != null)
+                return EntitySetCache[propertyName];
+
+            if (!Table.ChildRelByPropertyName.TryGetValue(propertyName, out var item))
+                return null; // Unknown property — shouldn't happen.
+
+            // If any of the local PK columns referenced by the child FK are dirty,
+            // we can't reliably query the DB, so return null until the entity is saved.
+            var childTable = TableCache.GetTableMap(item.Value);
+            foreach (var fk in childTable.ForeignKeys)
+            {
+                if (fk.ParentEntityType != Table.EntityType) continue;
+
+                foreach (var propName in fk.ForeignKey.PropertyNames)
+                {
+                    if (entity.DirtyProperties.Contains(propName))
+                        return null;
+                }
+            }
+
+            // Construct and cache the ChildDbSet<TParent, TChild>.
+            var entitySetInstance = Table.ChildDbSetFactories[propertyName](entity, item.Key, Context);
+            EntitySetCache[propertyName] = entitySetInstance;
+            return entitySetInstance;
         }
     }
 }

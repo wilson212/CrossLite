@@ -138,7 +138,7 @@ namespace CrossLite.Collections
         {
             var kvp = new KeyValuePair<TKey, TValue>(key, value);
             if (ContainsKey(key))
-                throw new ArgumentException($"An element with the key \"{key}\" already exists ", "key");
+                throw new ArgumentException($@"An element with the key ""{key}"" already exists ", "key");
 
             Collection.Add(kvp);
         }

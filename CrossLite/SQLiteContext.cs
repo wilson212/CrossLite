@@ -3,10 +3,12 @@ using CrossLite.CodeFirst;
 using CrossLite.QueryBuilder;
 using Microsoft.Data.Sqlite;
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
 using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 
@@ -68,7 +70,17 @@ namespace CrossLite
         /// </summary>
         /// <remarks>This property provides access to the underlying <see cref="ProxyGenerator"/>
         /// instance,  which can be used to generate proxy types or instances for intercepting method calls.</remarks>
-        private ProxyGenerator Generator { get; set; } = new ProxyGenerator();
+        private static readonly ProxyGenerator Generator = new ProxyGenerator();
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public bool UseIdentityMapping { get; set; } = true;
+        
+        /// <summary>
+        /// 
+        /// </summary>
+        internal Dictionary<Type, Dictionary<EntityKey, EntityBase>> EntityIdentityMap { get; } = [];
 
         /// <summary>
         /// Creates a new connection to an SQLite Database
@@ -98,14 +110,6 @@ namespace CrossLite
         }
 
         /// <summary>
-        /// Destructor
-        /// </summary>
-        ~SQLiteContext()
-        {
-            Dispose();
-        }
-
-        /// <summary>
         /// Disposes the DB connection
         /// </summary>
         public void Dispose()
@@ -114,19 +118,72 @@ namespace CrossLite
             {
                 try
                 {
-                    // Close and dispose of the internal connection
                     Connection.Close();
                     Connection.Dispose();
                 }
                 catch (ObjectDisposedException)
                 {
-                    // We dont do anything here
                 }
                 finally
                 {
-                    // Always set this to true!
                     IsDisposed = true;
+                    ClearIdentityMap();
                 }
+            }
+
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Removes a specific entity from the identity map using its primary key(s).
+        /// Values must be provided in the order defined by the PrimaryKey attribute.
+        /// </summary>
+        public void Detach<T>(params object[] keyValues) where T : EntityBase
+        {
+            var table = TableCache.GetTableMap(typeof(T));
+            
+            // Validate and pack using the same logic as Find()
+            var packedKey = PackIdentityKey(table, keyValues);
+            if (EntityIdentityMap.TryGetValue(typeof(T), out var typeMap))
+            {
+                typeMap.Remove(packedKey);
+            }
+        }
+
+        /// <summary>
+        /// Removes a specific entity from the identity map.
+        /// </summary>
+        /// <param name="entity"></param>
+        public void Detach<T>(T entity) where T : EntityBase
+        {
+            var table = TableCache.GetTableMap(entity.GetType());
+            
+            // Extract values directly from the entity using the sorted metadata
+            var values = table.PrimaryKeys.Select(pk => pk.GetValue(entity)).ToArray();
+            var packedKey = PackIdentityKey(table, values);
+            
+            if (EntityIdentityMap.TryGetValue(typeof(T), out var typeMap))
+            {
+                typeMap.Remove(packedKey);
+            }
+        }
+
+        /// <summary>
+        /// Clears the entire identity map for all entity types.
+        /// </summary>
+        public void ClearIdentityMap()
+        {
+            EntityIdentityMap.Clear();
+        }
+
+        /// <summary>
+        /// Clears all cached entities for a specific type.
+        /// </summary>
+        public void ClearIdentityMap(Type entityType)
+        {
+            if (EntityIdentityMap.TryGetValue(entityType, out var typeMap))
+            {
+                typeMap.Clear();
             }
         }
 
@@ -170,14 +227,41 @@ namespace CrossLite
         public bool IsConnected()
         {
             if (IsDisposed) return false;
-
-            //if (Connection.State == ConnectionState.Open)
-            return true;
-
-            //return false;
+            return Connection.State == ConnectionState.Open;
         }
 
         #endregion Connection Management
+
+        #region Database Management
+
+        /// <summary>
+        /// Performs an integrity check on the database, and returns the
+        /// number of issues found.
+        /// </summary>
+        /// <returns></returns>
+        public int PerformIntegrityCheck()
+        {
+            // Log any integrity errors in the database
+            var results = Query("PRAGMA integrity_check;").ToList();
+            if (results.Count > 0 && results[0]["integrity_check"].ToString() != "ok")
+            {
+                //LogErrors(results, "IntegrityErrors.log");
+                return results.Count;
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Performs a VACUUM on the database
+        /// </summary>
+        /// <seealso cref="https://sqlite.org/lang_vacuum.html"/>
+        public void VacuumDatabase()
+        {
+            Execute("VACUUM;");
+        }
+
+        #endregion
 
         #region Execute Methods
 
@@ -320,8 +404,8 @@ namespace CrossLite
                 }
 
                 // Execute command, and dispose of the command
-                object Value = Command.ExecuteScalar();
-                return (T)Convert.ChangeType(Value, typeof(T), CultureInfo.InvariantCulture);
+                var value = Command.ExecuteScalar();
+                return (T)Convert.ChangeType(value, typeof(T), CultureInfo.InvariantCulture);
             }
         }
 
@@ -336,8 +420,8 @@ namespace CrossLite
             using (command)
             {
                 // Execute command, and dispose of the command
-                object Value = command.ExecuteScalar();
-                return (T)Convert.ChangeType(Value, typeof(T), CultureInfo.InvariantCulture);
+                var value = command.ExecuteScalar();
+                return (T)Convert.ChangeType(value, typeof(T), CultureInfo.InvariantCulture);
             }
         }
 
@@ -375,9 +459,6 @@ namespace CrossLite
         /// <returns></returns>
         public IEnumerable<Dictionary<string, object>> Query(string sql, IEnumerable<SqliteParameter> parameters)
         {
-            // Create our Rows result
-            var rows = new List<Dictionary<string, object>>();
-
             // Create the SQL Command
             using (SqliteCommand command = this.CreateCommand(sql))
             {
@@ -401,9 +482,6 @@ namespace CrossLite
                             yield return row;
                         }
                     }
-
-                    // Cleanup
-                    reader.Close();
                 }
             }
         }
@@ -429,13 +507,13 @@ namespace CrossLite
 
             // Get our Table Mapping
             Type objType = typeof(T);
-            TableMapping table = EntityCache.GetTableMap(objType);
+            TableMapping table = TableCache.GetTableMap(objType);
 
             // Create the SQL Command
             using (SqliteCommand command = this.CreateCommand(sql))
             {
                 // Add params
-                foreach (SqliteParameter param in parameters)
+                foreach (SqliteParameter param in paramItems)
                     command.Parameters.Add(param);
 
                 // Execute the query
@@ -444,16 +522,15 @@ namespace CrossLite
                     // If we have rows, add them to the list
                     if (reader.HasRows)
                     {
+                        var (pkOrdinals, columnMap) = BuildReaderMaps<T>(table, reader);
+
                         // Add each row to the rows list
                         while (reader.Read())
                         {
                             // Add object
-                            yield return ConvertToEntity<T>(table, reader);
+                            yield return ConvertToEntity<T>(table, reader, pkOrdinals, columnMap);
                         }
                     }
-
-                    // Cleanup
-                    reader.Close();
                 }
             }
         }
@@ -468,7 +545,7 @@ namespace CrossLite
         {
             // Get our Table Mapping
             Type objType = typeof(T);
-            TableMapping table = EntityCache.GetTableMap(objType);
+            TableMapping table = TableCache.GetTableMap(objType);
 
             // Create the SQL Command
             using (SqliteCommand command = this.CreateCommand(sql))
@@ -483,20 +560,19 @@ namespace CrossLite
                     // If we have rows, add them to the list
                     if (reader.HasRows)
                     {
+                        var (pkOrdinals, columnMap) = BuildReaderMaps<T>(table, reader);
+
                         // Add each row to the rows list
                         while (reader.Read())
                         {
                             // Add object
-                            yield return ConvertToEntity<T>(table, reader);
+                            yield return ConvertToEntity<T>(table, reader, pkOrdinals, columnMap);
                         }
                     }
-
-                    // Cleanup
-                    reader.Close();
                 }
             }
         }
-
+        
         /// <summary>
         /// Executes the given Sql command and returns the result rows as entities
         /// </summary>
@@ -505,7 +581,7 @@ namespace CrossLite
         {
             // Get our Table Mapping
             Type objType = typeof(T);
-            TableMapping table = EntityCache.GetTableMap(objType);
+            TableMapping table = TableCache.GetTableMap(objType);
             command.Connection = this.Connection;
 
             // Create the SQL Command
@@ -515,16 +591,15 @@ namespace CrossLite
                 // If we have rows, add them to the list
                 if (reader.HasRows)
                 {
+                    var (pkOrdinals, columnMap) = BuildReaderMaps<T>(table, reader);
+
                     // Add each row to the rows list
                     while (reader.Read())
                     {
                         // Add object
-                        yield return ConvertToEntity<T>(table, reader);
+                        yield return ConvertToEntity<T>(table, reader, pkOrdinals, columnMap);
                     }
                 }
-
-                // Cleanup
-                reader.Close();
             }
         }
 
@@ -534,9 +609,6 @@ namespace CrossLite
         /// <returns></returns>
         public IEnumerable<Dictionary<string, object>> ExecuteReader(SqliteCommand command)
         {
-            // Create our Rows result
-            var rows = new List<Dictionary<string, object>>();
-
             // Create the SQL Command
             using (command)
             using (SqliteDataReader reader = command.ExecuteReader())
@@ -554,12 +626,9 @@ namespace CrossLite
                         yield return row;
                     }
                 }
-
-                // Cleanup
-                reader.Close();
             }
         }
-
+        
         /// <summary>
         /// Peforms a SELECT query on the Entity Type, and returns the Enumerator
         /// for the Result set.
@@ -570,7 +639,7 @@ namespace CrossLite
         {
             // Get our Table Mapping
             Type objType = typeof(TEntity);
-            TableMapping table = EntityCache.GetTableMap(objType);
+            TableMapping table = TableCache.GetTableMap(objType);
             string sql = $"SELECT * FROM {QuoteIdentifier(table.TableName)};";
 
             // Create the SQL Command
@@ -580,13 +649,12 @@ namespace CrossLite
                 // If we have rows, add them to the list
                 if (reader.HasRows)
                 {
+                    var (pkOrdinals, columnMap) = BuildReaderMaps<TEntity>(table, reader);
+
                     // Return each row
                     while (reader.Read())
-                        yield return ConvertToEntity<TEntity>(table, reader);
+                        yield return ConvertToEntity<TEntity>(table, reader, pkOrdinals, columnMap);
                 }
-
-                // Cleanup
-                reader.Close();
             }
         }
 
@@ -600,7 +668,7 @@ namespace CrossLite
         {
             // Get our Table Mapping
             Type objType = typeof(TEntity);
-            TableMapping table = EntityCache.GetTableMap(objType);
+            TableMapping table = TableCache.GetTableMap(objType);
             string sql = $"SELECT * FROM {QuoteIdentifier(table.TableName)} WHERE " + where;
 
             // Create the SQL Command
@@ -610,13 +678,12 @@ namespace CrossLite
                 // If we have rows, add them to the list
                 if (reader.HasRows)
                 {
+                    var (pkOrdinals, columnMap) = BuildReaderMaps<TEntity>(table, reader);
+
                     // Return each row
                     while (reader.Read())
-                        yield return ConvertToEntity<TEntity>(table, reader);
+                        yield return ConvertToEntity<TEntity>(table, reader, pkOrdinals, columnMap);
                 }
-
-                // Cleanup
-                reader.Close();
             }
         }
 
@@ -628,7 +695,7 @@ namespace CrossLite
         public SelectQueryBuilder From<T>() where T : IConvertible
         {
             SelectQueryBuilder builder = new SelectQueryBuilder(this);
-            builder.Table = EntityCache.GetTableMap(typeof(T)).TableName;
+            builder.Table = TableCache.GetTableMap(typeof(T)).TableName;
             return builder;
         }
 
@@ -788,8 +855,43 @@ namespace CrossLite
         /// <param name="table">The <see cref="TableMapping"/> for this Entity</param>
         /// <param name="reader">The current, open DataReader object</param>
         /// <returns></returns>
-        internal TEntity ConvertToEntity<TEntity>(TableMapping table, SqliteDataReader reader) where TEntity : EntityBase, new()
+        internal TEntity ConvertToEntity<TEntity>(
+            TableMapping table, 
+            SqliteDataReader reader, 
+            int[] pkOrdinals = null,
+            AttributeInfo[] columnMap = null) where TEntity : EntityBase, new()
         {
+            EntityKey pkValue = default;
+            Type typeKey = typeof(TEntity);
+
+            // 1. Identity Mapping Check
+            if (UseIdentityMapping && table.PrimaryKeys.Count > 0)
+            {
+                // Use the pre-cached ordinals if provided; otherwise, look them up once
+                if (pkOrdinals == null)
+                {
+                    pkOrdinals = new int[table.PrimaryKeys.Count];
+                    int idx = 0;
+                    foreach (var pk in table.PrimaryKeys)
+                        pkOrdinals[idx++] = reader.GetOrdinal(pk.ColumnName);
+                }
+
+                // Pack the identity key (Handles simple and composite keys)
+                pkValue = GetIdentityKey(table, reader, pkOrdinals);
+
+                // Check the map for an existing instance
+                if (!EntityIdentityMap.TryGetValue(typeKey, out var typeMap))
+                {
+                    typeMap = new Dictionary<EntityKey, EntityBase>();
+                    EntityIdentityMap[typeKey] = typeMap;
+                }
+
+                if (typeMap.TryGetValue(pkValue, out var existing))
+                {
+                    return (TEntity)existing; // Return the exact same instance!
+                }
+            }
+
             // Use reflection to map the column name to the object Property
             TEntity entity = new() { State = EntityState.Loading };
             if (table.HasVirtuals)
@@ -799,69 +901,96 @@ namespace CrossLite
                 entity = Generator.CreateClassProxyWithTarget(entity, interceptor);
             }
 
-            // Map each column to the property
+            // Map each column to the property — use pre-built columnMap if available
             for (int i = 0; i < reader.FieldCount; ++i)
             {
-                string attrName = reader.GetName(i);
-                var attribute = table.GetAttributeByColumnName(attrName);
-                PropertyInfo property = attribute.Property;
-                bool isNullable = attribute.IsNullable;
-                Type underlyingType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+                var attribute = columnMap?[i] ?? table.GetAttributeByColumnName(reader.GetName(i));
 
-                if (underlyingType.IsEnum)
+                if (attribute.IsEnum)
                 {
-                    var value = Enum.Parse(underlyingType, reader.GetValue(i).ToString());
-                    property.SetValue(entity, value);
+                    // Enum.ToObject is O(1) 
+                    var value = Enum.ToObject(attribute.UnderlyingType, reader.GetValue(i));
+                    attribute.SetValue(entity, value);
                 }
-                else if (isNullable && reader.IsDBNull(i))
+                else if (attribute.IsNullable && reader.IsDBNull(i))
                 {
-                    // If the property is nullable, we can set it to null
-                    property.SetValue(entity, null);
+                    attribute.SetValue(entity, null);
                 }
                 else
                 {
-                    // SQLite doesn't support nearly as many primitive types as
-                    // C# does, so we must translate
-                    switch (Type.GetTypeCode(underlyingType))
+                    switch (attribute.UnderlyingTypeCode)
                     {
                         case TypeCode.Byte:
-                            property.SetValue(entity, reader.GetByte(i));
+                            if (attribute.SetByte != null)
+                                attribute.SetByte(entity, reader.GetByte(i));
+                            else
+                                attribute.SetValue(entity, reader.GetByte(i));
                             break;
                         case TypeCode.Int16:
-                            property.SetValue(entity, reader.GetInt16(i));
+                            if (attribute.SetInt16 != null)
+                                attribute.SetInt16(entity, reader.GetInt16(i));
+                            else
+                                attribute.SetValue(entity, reader.GetInt16(i));
                             break;
                         case TypeCode.Int32:
-                            property.SetValue(entity, reader.GetInt32(i));
+                            if (attribute.SetInt32 != null)
+                                attribute.SetInt32(entity, reader.GetInt32(i));
+                            else
+                                attribute.SetValue(entity, reader.GetInt32(i));
                             break;
                         case TypeCode.Int64:
-                            property.SetValue(entity, reader.GetInt64(i));
+                            if (attribute.SetInt64 != null)
+                                attribute.SetInt64(entity, reader.GetInt64(i));
+                            else
+                                attribute.SetValue(entity, reader.GetInt64(i));
                             break;
                         case TypeCode.Boolean:
-                            property.SetValue(entity, reader.GetBoolean(i));
+                            if (attribute.SetBool != null)
+                                attribute.SetBool(entity, reader.GetBoolean(i));
+                            else
+                                attribute.SetValue(entity, reader.GetBoolean(i));
                             break;
                         case TypeCode.Decimal:
-                            property.SetValue(entity, reader.GetDecimal(i));
+                            if (attribute.SetDecimal != null)
+                                attribute.SetDecimal(entity, reader.GetDecimal(i));
+                            else
+                                attribute.SetValue(entity, reader.GetDecimal(i));
                             break;
                         case TypeCode.Double:
-                            property.SetValue(entity, reader.GetDouble(i));
+                            if (attribute.SetDouble != null)
+                                attribute.SetDouble(entity, reader.GetDouble(i));
+                            else
+                                attribute.SetValue(entity, reader.GetDouble(i));
                             break;
                         case TypeCode.Char:
-                            property.SetValue(entity, reader.GetChar(i));
+                            if (attribute.SetChar != null)
+                                attribute.SetChar(entity, reader.GetChar(i));
+                            else
+                                attribute.SetValue(entity, reader.GetChar(i));
                             break;
                         case TypeCode.DateTime:
                             if (!reader.IsDBNull(i))
-                                property.SetValue(entity, reader.GetDateTime(i));
+                            {
+                                if (attribute.SetDateTime != null)
+                                    attribute.SetDateTime(entity, reader.GetDateTime(i));
+                                else
+                                    attribute.SetValue(entity, reader.GetDateTime(i));
+                            }
                             break;
                         default:
-                            // Correct DBNull values
                             object val = reader.GetValue(i);
                             if (val is DBNull)
                                 continue;
-
-                            property.SetValue(entity, val);
+                            attribute.SetValue(entity, val);
                             break;
                     }
                 }
+            }
+
+            // Store entity in identity table
+            if (UseIdentityMapping && table.PrimaryKeys.Count > 0)
+            {
+                EntityIdentityMap[typeKey][pkValue] = entity;
             }
 
             // Update entity state
@@ -874,14 +1003,14 @@ namespace CrossLite
         /// <summary>
         /// Creates a new instance of the specified entity type.
         /// </summary>
-        /// <remarks>The entity type must be mapped in the <see cref="EntityCache"/>. If the mapping is
+        /// <remarks>The entity type must be mapped in the <see cref="TableCache"/>. If the mapping is
         /// not found, an exception may be thrown.</remarks>
         /// <typeparam name="TEntity">The type of the entity to create. Must derive from <see cref="EntityBase"/> and have a parameterless
         /// constructor.</typeparam>
         /// <returns>A new instance of the specified entity type.</returns>
         public TEntity CreateEntity<TEntity>() where TEntity : EntityBase, new()
         {
-            var table = EntityCache.GetTableMap(typeof(TEntity));
+            var table = TableCache.GetTableMap(typeof(TEntity));
             return CreateEntity<TEntity>(table);
         }
 
@@ -947,19 +1076,19 @@ namespace CrossLite
         }
 
         /// <summary>
-        /// Converts a <see cref="ReferentialIntegrity"/> item to its SQLite
+        /// Converts a <see cref="ReferentialAction"/> item to its SQLite
         /// string equivelant
         /// </summary>
         /// <param name="action"></param>
         /// <returns></returns>
-        internal static string ToSQLite(ReferentialIntegrity action)
+        internal static string ToSQLite(ReferentialAction action)
         {
             switch (action)
             {
-                case ReferentialIntegrity.Cascade: return "CASCADE";
-                case ReferentialIntegrity.Restrict: return "RESTRICT";
-                case ReferentialIntegrity.SetDefault: return "SET DEFAULT";
-                case ReferentialIntegrity.SetNull: return "SET NULL";
+                case ReferentialAction.Cascade: return "CASCADE";
+                case ReferentialAction.Restrict: return "RESTRICT";
+                case ReferentialAction.SetDefault: return "SET DEFAULT";
+                case ReferentialAction.SetNull: return "SET NULL";
                 default: return "NO ACTION";
             }
         }
@@ -1020,12 +1149,14 @@ namespace CrossLite
         /// </summary>
         private static string ApplyQuotes(string value, IdentifierQuoteKind kind)
         {
-            // Don't escape wildcard
             if (value == "*") return value;
-
-            // Apply quotes to value
             var chars = EscapeChars[kind];
-            return $"{chars[0]}{value}{chars[1]}";
+            return string.Create(value.Length + 2, (value, chars), (span, state) =>
+            {
+                span[0] = state.chars[0];
+                state.value.AsSpan().CopyTo(span[1..]);
+                span[^1] = state.chars[1];
+            });
         }
 
         /// <summary>
@@ -1074,22 +1205,92 @@ namespace CrossLite
             return false;
         }
 
+        /// <summary>
+        /// Gets an indentity key for a given EntityType
+        /// </summary>
+        /// <param name="table"></param>
+        /// <param name="reader"></param>
+        /// <param name="pkOrdinals"></param>
+        /// <returns></returns>
+        private static EntityKey GetIdentityKey(TableMapping table, SqliteDataReader reader, int[] pkOrdinals)
+        {
+            return pkOrdinals.Length switch
+            {
+                1 => new EntityKey(reader.GetValue(pkOrdinals[0])),
+                2 => new EntityKey(reader.GetValue(pkOrdinals[0]), reader.GetValue(pkOrdinals[1])),
+                3 => new EntityKey(reader.GetValue(pkOrdinals[0]), reader.GetValue(pkOrdinals[1]), reader.GetValue(pkOrdinals[2])),
+                4 => new EntityKey(reader.GetValue(pkOrdinals[0]), reader.GetValue(pkOrdinals[1]), reader.GetValue(pkOrdinals[2]), reader.GetValue(pkOrdinals[3])),
+                5 => new EntityKey(reader.GetValue(pkOrdinals[0]), reader.GetValue(pkOrdinals[1]), reader.GetValue(pkOrdinals[2]), reader.GetValue(pkOrdinals[3]), reader.GetValue(pkOrdinals[4])),
+                _ => throw new NotSupportedException($"Composite keys with {pkOrdinals.Length} columns are not supported.")
+            };
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="table"></param>
+        /// <param name="values"></param>
+        /// <returns></returns>
+        /// <exception cref="ArgumentException"></exception>
+        private static EntityKey PackIdentityKey(TableMapping table, object[] values)
+        {
+            var pks = table.PrimaryKeys;
+            if (values == null || values.Length != pks.Count)
+                throw new ArgumentException($"Entity '{table.EntityType.Name}' requires exactly {pks.Count} primary key values.");
+
+            return values.Length switch
+            {
+                1 => new EntityKey(values[0]),
+                2 => new EntityKey(values[0], values[1]),
+                3 => new EntityKey(values[0], values[1], values[2]),
+                4 => new EntityKey(values[0], values[1], values[2], values[3]),
+                5 => new EntityKey(values[0], values[1], values[2], values[3], values[4]),
+                _ => throw new NotSupportedException($"Composite keys with {values.Length} columns are not supported.")
+            };
+        }
+        
+        /// <summary>
+        /// Builds the per-query column ordinal map and PK ordinals from the current reader.
+        /// Call once after ExecuteReader(), before the row loop.
+        /// </summary>
+        private (int[] pkOrdinals, AttributeInfo[] columnMap) BuildReaderMaps<T>(
+            TableMapping table, SqliteDataReader reader) where T : EntityBase, new()
+        {
+            // Cache column name -> AttributeInfo mapping once per query
+            var columnMap = new AttributeInfo[reader.FieldCount];
+            for (int i = 0; i < reader.FieldCount; i++)
+                columnMap[i] = table.GetAttributeByColumnName(reader.GetName(i));
+
+            // Pre-compute PK ordinals once per query
+            int[] pkOrdinals = null;
+            if (UseIdentityMapping && table.PrimaryKeys.Count > 0)
+            {
+                pkOrdinals = new int[table.PrimaryKeys.Count];
+                int idx = 0;
+                foreach (var pk in table.PrimaryKeys)
+                    pkOrdinals[idx++] = reader.GetOrdinal(pk.ColumnName);
+            }
+
+            return (pkOrdinals, columnMap);
+        }
+
         #endregion Helper Methods
 
         #region Static Properties
 
-        internal static IReadOnlyDictionary<IdentifierQuoteKind, char[]> EscapeChars = new Dictionary<IdentifierQuoteKind, char[]>()
-        {
-            { IdentifierQuoteKind.Default, new char[2] { '"', '"' } },
-            { IdentifierQuoteKind.SingleQuotes, new char[2] { '\'', '\'' } },
-            { IdentifierQuoteKind.SquareBrackets, new char[2] { '[', ']' } },
-            { IdentifierQuoteKind.Accents, new char[2] { '`', '`' } },
-        };
+        internal static readonly FrozenDictionary<IdentifierQuoteKind, char[]> EscapeChars = 
+            new Dictionary<IdentifierQuoteKind, char[]>
+            {
+                { IdentifierQuoteKind.Default, new char[2] { '"', '"' } },
+                { IdentifierQuoteKind.SingleQuotes, new char[2] { '\'', '\'' } },
+                { IdentifierQuoteKind.SquareBrackets, new char[2] { '[', ']' } },
+                { IdentifierQuoteKind.Accents, new char[2] { '`', '`' } },
+            }.ToFrozenDictionary();
 
         /// <summary>
         /// Gets or sets the list of SQLite reserved keywords
         /// </summary>
-        public static HashSet<string> Keywords = new HashSet<string>(new string[]
+        public static FrozenSet<string> Keywords = new HashSet<string>(new string[]
             {
                 "ABORT",
                 "ACTION",
@@ -1216,8 +1417,7 @@ namespace CrossLite
                 "WITH",
                 "WITHOUT",
             },
-            StringComparer.OrdinalIgnoreCase
-        );
+            StringComparer.OrdinalIgnoreCase) .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
         #endregion
 

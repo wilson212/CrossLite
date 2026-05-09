@@ -1,66 +1,36 @@
-﻿using Microsoft.Data.Sqlite;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using System.Collections.Generic;
 
 namespace CrossLite.QueryBuilder
 {
     /// <summary>
-    /// Represents a WHERE statement inside an SQL SELECT query
+    /// A WHERE statement specifically designed for use with <see cref="SelectQueryBuilder"/>.
+    /// 
+    /// Inherits all clause-building and SQL generation logic from <see cref="WhereStatementBase{TSelf}"/>.
+    /// The only addition is a back-reference to the parent <see cref="SelectQueryBuilder"/>, which enables
+    /// fluent re-chaining methods (e.g., <c>.Where("x", Equals, 5).SelectAll().Take(10)</c>).
+    /// 
+    /// These re-chaining methods are purely ergonomic shortcuts — they delegate directly to the
+    /// parent query builder. They exist here so the caller doesn't have to break the fluent chain
+    /// after adding a WHERE clause.
     /// </summary>
-    public class SelectWhereStatement : IWhereStatement
+    public class SelectWhereStatement : WhereStatementBase<SelectWhereStatement>
     {
         /// <summary>
-        /// Gets the current Clause group in this Statement
-        /// </summary>
-        public WhereClause<SelectWhereStatement> CurrentClause { get; protected set; }
-
-        /// <summary>
-        /// Gets a list of all Where Clauses in this statement
-        /// </summary>
-        public List<WhereClause<SelectWhereStatement>> Clauses { get; protected set; }
-
-        /// <summary>
-        /// Gets or Sets the Logic Operator to use in Clauses. The opposite operator
-        /// will be used to seperate clauses. The Default is And and should not be changed
-        /// unless you know what you are doing!
-        /// </summary>
-        public LogicOperator InnerClauseOperator { get; set; } = LogicOperator.And;
-
-        /// <summary>
-        /// Indicates whether this WhereStatement has any clauses, or if its empty.
-        /// </summary>
-        public bool HasClause => Clauses.Any(x => x.Expressions.Count > 0);
-
-        /// <summary>
-        /// Gets or sets the <see cref="CrossLite.IdentifierQuoteMode"/> this instance will use for queries
-        /// </summary>
-        public IdentifierQuoteMode AttributeQuoteMode { get; set; } = SQLiteContext.DefaultIdentifierQuoteMode;
-
-        /// <summary>
-        /// Gets or sets the <see cref="CrossLite.IdentifierQuoteKind"/> this instance will use for queries
-        /// </summary>
-        public IdentifierQuoteKind AttributeQuoteKind { get; set; } = SQLiteContext.DefaultIdentifierQuoteKind;
-
-        /// <summary>
-        /// The query builder this statement is attached to if one exists
+        /// The parent <see cref="SelectQueryBuilder"/> this WHERE statement is attached to.
+        /// Null when the statement is used standalone (rare for this type).
         /// </summary>
         internal SelectQueryBuilder Query { get; set; }
 
         /// <summary>
-        /// Creates a new instance of <see cref="WhereStatement"/>
+        /// Creates a new empty <see cref="SelectWhereStatement"/> with default quoting settings.
         /// </summary>
-        public SelectWhereStatement()
-        {
-            CurrentClause = new WhereClause<SelectWhereStatement>();
-            Clauses = new List<WhereClause<SelectWhereStatement>>() { CurrentClause };
-        }
+        public SelectWhereStatement() { }
 
         /// <summary>
-        /// Creates a new instance of <see cref="SelectWhereStatement"/> using the quoting settings
-        /// from the supplied SQLiteContext
+        /// Creates a new <see cref="SelectWhereStatement"/> using the quoting settings
+        /// from the supplied <see cref="SQLiteContext"/>.
         /// </summary>
+        /// <param name="context">The database context whose quoting settings will be applied.</param>
         public SelectWhereStatement(SQLiteContext context) : this()
         {
             AttributeQuoteMode = context.IdentifierQuoteMode;
@@ -68,284 +38,137 @@ namespace CrossLite.QueryBuilder
         }
 
         /// <summary>
-        /// Creates a new instance of <see cref="SelectWhereStatement"/> using the quoting settings
-        /// from the supplied SelectQueryBuilder
+        /// Creates a new <see cref="SelectWhereStatement"/> attached to the specified query builder.
+        /// Quoting settings are inherited from the query builder's context.
         /// </summary>
-        /// <param name="query"></param>
+        /// <param name="query">The parent query builder to attach to for re-chaining.</param>
         public SelectWhereStatement(SelectQueryBuilder query) : this()
         {
-            this.Query = query;
+            Query = query;
             AttributeQuoteMode = query.Context.IdentifierQuoteMode;
             AttributeQuoteKind = query.Context.IdentifierQuoteKind;
         }
 
-        /// <summary>
-        /// Ends the current active clause, and creates a new one.
-        /// </summary>
-        public void CreateNewClause()
-        {
-            // Create new Group
-            if (CurrentClause.Expressions.Count > 0)
-            {
-                CurrentClause = new WhereClause<SelectWhereStatement>();
-                Clauses.Add(CurrentClause);
-            }
-        }
-
-        /// <summary>
-        /// Appends a new expression evaluation to the current Statement
-        /// </summary>
-        /// <param name="fieldName">The attribute name we are performing the evaluation on</param>
-        /// <param name="operator">The Comparison we are performing on this attribute</param>
-        /// <param name="value">The value at which we require in this evaluation</param>
-        /// <param name="literal">If true, than the value will not be escaped and quoted during the query</param>
-        /// <returns>Returns this object to allow method chaining</returns>
-        public SelectWhereStatement And(string fieldName, Comparison @operator, object value, bool literal = false)
-        {
-            // Create new Group
-            if (InnerClauseOperator == LogicOperator.Or && HasClause)
-                this.CreateNewClause();
-
-            SqlExpression<SelectWhereStatement> expression;
-            // Convert value
-            if (literal)
-                expression = new SqlExpression<SelectWhereStatement>(fieldName, @operator, new SqlLiteral(value?.ToString() ?? null), this);
-            else
-                expression = new SqlExpression<SelectWhereStatement>(fieldName, @operator, value, this);
-
-            // Allow chaining
-            CurrentClause.Expressions.Add(expression);
-            return this;
-        }
-
-        /// <summary>
-        /// Appends a new expression evaluation to the current Statement
-        /// </summary>
-        /// <param name="fieldName">The attribute name we are performing the evaluation on</param>
-        /// <returns>Returns this object to allow method chaining</returns>
-        public SqlExpression<SelectWhereStatement> And(string fieldName)
-        {
-            // Create new Group
-            if (InnerClauseOperator == LogicOperator.Or && HasClause)
-                this.CreateNewClause();
-
-            // Create Expression
-            var expression = new SqlExpression<SelectWhereStatement>(fieldName, this);
-            CurrentClause.Expressions.Add(expression);
-
-            return expression;
-        }
-
-        /// <summary>
-        /// Appends a new expression evaluation to the current Statement
-        /// </summary>
-        /// <param name="fieldName">The attribute name we are performing the evaluation on</param>
-        /// <param name="operator">The Comparison we are performing on this attribute</param>
-        /// <param name="value">The value at which we require in this evaluation</param>
-        /// <param name="literal">If true, than the value will not be escaped and quoted during the query</param>
-        /// <returns>Returns this object to allow method chaining</returns>
-        public SelectWhereStatement Or(string fieldName, Comparison @operator, object value, bool literal = false)
-        {
-            // Create new Group
-            if (InnerClauseOperator == LogicOperator.And && HasClause)
-                this.CreateNewClause();
-
-            // Create Expression
-            SqlExpression<SelectWhereStatement> expression;
-
-            // Convert value
-            if (literal)
-                expression = new SqlExpression<SelectWhereStatement>(fieldName, @operator, new SqlLiteral(value.ToString()), this);
-            else
-                expression = new SqlExpression<SelectWhereStatement>(fieldName, @operator, value, this);
-
-            // Allow chaining
-            CurrentClause.Expressions.Add(expression);
-            return this;
-        }
-
-        /// <summary>
-        /// Appends a new expression evaluation to the current Statement
-        /// </summary>
-        /// <param name="fieldName">The attribute name we are performing the evaluation on</param>
-        /// <returns>Returns this object to allow method chaining</returns>
-        public SqlExpression<SelectWhereStatement> Or(string fieldName)
-        {
-            // Create new Group
-            if (InnerClauseOperator == LogicOperator.And && HasClause)
-                this.CreateNewClause();
-
-            // Create Expression
-            var expression = new SqlExpression<SelectWhereStatement>(fieldName, this);
-            CurrentClause.Expressions.Add(expression);
-
-            return expression;
-        }
-
-        /// <summary>
-        /// Builds the current set of Clauses and returns the output as a string.
-        /// </summary>
-        /// <returns></returns>
-        public string BuildStatement() => BuildStatement(null);
-
-        /// <summary>
-        /// Builds the current set of Clauses and returns the output as a string.
-        /// </summary>
-        /// <param name="parameters">A list of current query parameters</param>
-        /// <returns></returns>
-        public string BuildStatement(out List<SqliteParameter> parameters)
-        {
-            parameters = new List<SqliteParameter>();
-            return BuildStatement(parameters);
-        }
-
-        /// <summary>
-        /// Builds the current set of Clauses and returns the full statement as a string.
-        /// </summary>
-        /// <param name="parameters">A list that will be filled with the statements parameters</param>
-        /// <returns></returns>
-        public string BuildStatement(List<SqliteParameter> parameters)
-        {
-            StringBuilder builder = new StringBuilder();
-            int paramsCounter = parameters?.Count ?? 0;
-            int counter = 0;
-
-            // Remove empty expressions
-            Clauses.RemoveAll(x => x.Expressions.Count == 0);
-
-            // Loop through each Where clause (wrapped in parenthesis)
-            foreach (var clause in Clauses)
-            {
-                // Open Parent Clause grouping if we have more then 1 SubClause
-                int subCounter = 0;
-                builder.AppendIf(clause.Expressions.Count > 1 && Clauses.Count > 0, '(');
-
-                // Append each Sub Clause
-                foreach (var expression in clause.Expressions)
-                {
-                    // If we have more sub clauses in this group, append operator
-                    builder.AppendIf(++subCounter > 1, (InnerClauseOperator == LogicOperator.Or) ? " OR " : " AND ");
-                    builder.Append((parameters == null) ? expression.ToString() : expression.BuildExpression(parameters));
-                }
-
-                // Close Parent Clause grouping
-                builder.AppendIf(clause.Expressions.Count > 1 && Clauses.Count > 0, ')');
-
-                // If we have more clauses, append operator
-                builder.AppendIf(++counter < Clauses.Count, (InnerClauseOperator == LogicOperator.And) ? " OR " : " AND ");
-            }
-
-            return builder.ToString();
-        }
-
         #region Re-Chaining Methods
+        // These methods allow the caller to fluently chain back to the SelectQueryBuilder
+        // after adding WHERE expressions, without needing to store a separate reference.
+        // Example: query.Where("rank", Equals, 5).SelectAll().Take(10).OrderBy("name", Ascending);
 
         /// <summary>
-        /// Selects all columns in the joining table
+        /// Selects all columns in the query. Re-chains to <see cref="SelectQueryBuilder.SelectAll"/>.
         /// </summary>
         public SelectQueryBuilder SelectAll() => Query?.SelectAll();
 
         /// <summary>
-        /// Selects a specified column in the joining table.
+        /// Selects a single column, optionally with an alias.
+        /// Re-chains to <see cref="SelectQueryBuilder.SelectColumn"/>.
         /// </summary>
-        /// <param name="column">The Column name to select</param>
+        /// <param name="column">The column name to select.</param>
+        /// <param name="alias">Optional alias for the column in the result set.</param>
+        /// <param name="escape">Whether to quote the column name. Default is true.</param>
         public SelectQueryBuilder SelectColumn(string column, string alias = null, bool escape = true)
-             => Query?.SelectColumn(column, alias, escape);
+            => Query?.SelectColumn(column, alias, escape);
 
         /// <summary>
-        /// Adds the specified column selectors in the joining table.
+        /// Selects multiple columns by name. Re-chains to <see cref="SelectQueryBuilder.Select(string[])"/>.
         /// </summary>
-        /// <param name="columns">The column names to select</param>
+        /// <param name="columns">The column names to select.</param>
         public SelectQueryBuilder Select(params string[] columns) => Query?.Select(columns);
 
         /// <summary>
-        /// Adds the specified column selectors in the joining table.
+        /// Selects multiple columns by name. Re-chains to <see cref="SelectQueryBuilder.Select(IEnumerable{string})"/>.
         /// </summary>
-        /// <param name="columns">The column names to select</param>
+        /// <param name="columns">The column names to select.</param>
         public SelectQueryBuilder Select(IEnumerable<string> columns) => Query?.Select(columns);
 
         /// <summary>
-        /// The count(X) function returns a count of the number of times that X is not NULL in a group. 
-        /// The count(*) function (with no arguments) returns the total number of rows in the group.
+        /// Adds a COUNT aggregate to the SELECT clause.
+        /// COUNT(*) returns total rows; COUNT(column) returns non-NULL count.
         /// </summary>
-        /// <param name="columnName">The column name to perform the aggregate on</param>
-        /// <param name="alias">The return alias of the aggregate result, if any.</param>
+        /// <param name="columnName">The column to count, or "*" for all rows. Default is "*".</param>
+        /// <param name="alias">Optional alias for the result column.</param>
         public SelectQueryBuilder SelectCount(string columnName = "*", string alias = null)
             => Query?.Aggregate(columnName, alias, AggregateFunction.Count);
 
         /// <summary>
-        /// The count(distinct X) function returns the number of distinct values of column X instead of the 
-        /// total number of non-null values in column X.
+        /// Adds a COUNT(DISTINCT column) aggregate to the SELECT clause.
+        /// Returns the number of unique non-NULL values in the specified column.
         /// </summary>
-        /// <param name="columnName">The column name to perform the aggregate on</param>
-        /// <param name="alias">The return alias of the aggregate result, if any.</param>
+        /// <param name="columnName">The column to count distinct values of.</param>
+        /// <param name="alias">Optional alias for the result column.</param>
         public SelectQueryBuilder SelectDistinctCount(string columnName, string alias = null)
             => Query?.Aggregate(columnName, alias, AggregateFunction.DistinctCount);
 
         /// <summary>
-        /// The avg() function returns the average value of all non-NULL X within a group
+        /// Adds an AVG aggregate to the SELECT clause.
+        /// Returns the average of all non-NULL values in the group.
         /// </summary>
-        /// <param name="columnName">The column name to perform the aggregate on</param>
-        /// <param name="alias">The return alias of the aggregate result, if any.</param>
+        /// <param name="columnName">The column to average.</param>
+        /// <param name="alias">Optional alias for the result column.</param>
         public SelectQueryBuilder SelectAverage(string columnName, string alias = null)
             => Query?.Aggregate(columnName, alias, AggregateFunction.Average);
 
         /// <summary>
-        /// The min() aggregate function returns the minimum non-NULL value of all values in the group
+        /// Adds a MIN aggregate to the SELECT clause.
+        /// Returns the minimum non-NULL value in the group.
         /// </summary>
-        /// <param name="columnName">The column name to perform the aggregate on</param>
-        /// <param name="alias">The return alias of the aggregate result, if any.</param>
+        /// <param name="columnName">The column to find the minimum of.</param>
+        /// <param name="alias">Optional alias for the result column.</param>
         public SelectQueryBuilder SelectMin(string columnName, string alias = null)
             => Query?.Aggregate(columnName, alias, AggregateFunction.Min);
 
         /// <summary>
-        /// The max() aggregate function returns the maximum value of all values in the group
+        /// Adds a MAX aggregate to the SELECT clause.
+        /// Returns the maximum value in the group.
         /// </summary>
-        /// <param name="columnName">The column name to perform the aggregate on</param>
-        /// <param name="alias">The return alias of the aggregate result, if any.</param>
+        /// <param name="columnName">The column to find the maximum of.</param>
+        /// <param name="alias">Optional alias for the result column.</param>
         public SelectQueryBuilder SelectMax(string columnName, string alias = null)
             => Query?.Aggregate(columnName, alias, AggregateFunction.Max);
 
         /// <summary>
-        /// The sum() aggregate functions return sum of all non-NULL values in the group.
+        /// Adds a SUM aggregate to the SELECT clause.
+        /// Returns the sum of all non-NULL values in the group.
         /// </summary>
-        /// <param name="columnName">The column name to perform the aggregate on</param>
-        /// <param name="alias">The return alias of the aggregate result, if any.</param>
+        /// <param name="columnName">The column to sum.</param>
+        /// <param name="alias">Optional alias for the result column.</param>
         public SelectQueryBuilder SelectSum(string columnName, string alias = null)
             => Query?.Aggregate(columnName, alias, AggregateFunction.Sum);
 
         /// <summary>
-        /// Bypasses the specified amount of records (offset) in the result set.
+        /// Sets the OFFSET (number of rows to skip) in the result set.
         /// </summary>
-        /// <param name="">The offset in the query</param>
-        /// <returns>Returns the <see cref="SelectQueryBuilder"/> this instance is attached to, or null</returns>
+        /// <param name="count">The number of rows to skip.</param>
+        /// <returns>The parent <see cref="SelectQueryBuilder"/>, or null if not attached.</returns>
         public SelectQueryBuilder Skip(int count) => Query?.Skip(count);
 
         /// <summary>
-        /// Specifies the maximum number of records to return in the query (limit)
+        /// Sets the LIMIT (maximum number of rows to return) in the result set.
         /// </summary>
-        /// <param name="">The number of records to grab from the result set</param>
-        /// <returns>Returns the <see cref="SelectQueryBuilder"/> this instance is attached to, or null</returns>
+        /// <param name="count">The maximum number of rows to return.</param>
+        /// <returns>The parent <see cref="SelectQueryBuilder"/>, or null if not attached.</returns>
         public SelectQueryBuilder Take(int count) => Query?.Take(count);
 
         /// <summary>
-        /// Adds an OrderBy clause to the current query object
+        /// Adds an ORDER BY clause using a pre-built <see cref="OrderByClause"/>.
         /// </summary>
-        /// <param name="clause"></param>
-        /// /// <returns>Returns the <see cref="SelectQueryBuilder"/> this instance is attached to, or null</returns>
+        /// <param name="clause">The order-by clause to add.</param>
+        /// <returns>The parent <see cref="SelectQueryBuilder"/>, or null if not attached.</returns>
         public SelectQueryBuilder OrderBy(OrderByClause clause) => Query?.OrderBy(clause);
 
         /// <summary>
-        /// Creates and adds a new Oderby clause to the current query object
+        /// Adds an ORDER BY clause for the specified column and sort direction.
         /// </summary>
-        /// <param name="fieldName"></param>
-        /// <param name="order"></param>
+        /// <param name="fieldName">The column name to sort by.</param>
+        /// <param name="order">The sort direction (Ascending or Descending).</param>
+        /// <returns>The parent <see cref="SelectQueryBuilder"/>, or null if not attached.</returns>
         public SelectQueryBuilder OrderBy(string fieldName, Sorting order) => Query?.OrderBy(fieldName, order);
 
         /// <summary>
-        /// Creates and adds a new Groupby clause to the current query object
+        /// Adds a GROUP BY clause for the specified column.
         /// </summary>
-        /// <param name="fieldName"></param>
+        /// <param name="fieldName">The column name to group by.</param>
+        /// <returns>The parent <see cref="SelectQueryBuilder"/>, or null if not attached.</returns>
         public SelectQueryBuilder GroupBy(string fieldName) => Query?.GroupBy(fieldName);
 
         #endregion

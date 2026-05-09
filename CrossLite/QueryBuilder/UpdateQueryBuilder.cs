@@ -140,93 +140,100 @@ namespace CrossLite.QueryBuilder
         }
 
         /// <summary>
-        /// Builds the query string with the current SQL Statement, and returns
-        /// the querystring. This method is NOT Sql Injection safe!
+        /// Builds the SQL query string for an update operation based on the specified parameters and conditions.
         /// </summary>
-        /// <returns></returns>
-        public override string BuildQuery() => BuildQuery(false) as String;
+        /// <returns>A string representing the constructed SQL query for the update operation.</returns>
+        public override string BuildQuery() => BuildSql(null);
 
         /// <summary>
-        /// Builds the query string with the current SQL Statement, and
-        /// returns the DbCommand to be executed. All WHERE paramenters
-        /// are propery escaped, making this command SQL Injection safe.
+        /// Builds and returns a configured SQLite command object with the generated SQL statement and associated parameters.
         /// </summary>
-        /// <returns></returns>
-        public override SqliteCommand BuildCommand() => BuildQuery(true) as SqliteCommand;
+        /// <returns>A <see cref="SqliteCommand"/> object containing the SQL query and its parameters for execution.</returns>
+        public override SqliteCommand BuildCommand()
+        {
+            var parameters = new List<SqliteParameter>();
+            string sql = BuildSql(parameters);
+            var command = Context.CreateCommand(sql);
+            
+            foreach (var p in parameters)
+                command.Parameters.Add(p);
+            
+            return command;
+        }
 
         /// <summary>
-        /// Builds the query string or DbCommand
+        /// Builds an SQL command string for updating rows in a database table and optionally assigns parameters for the query.
         /// </summary>
-        /// <param name="buildCommand"></param>
-        /// <returns></returns>
-        protected object BuildQuery(bool buildCommand, bool useNamedParams = false)
+        /// <param name="parameters">A list of <see cref="SqliteParameter"/> objects that will be populated with query parameter values, or null if no parameterization is needed.</param>
+        /// <returns>A string containing the generated SQL update statement.</returns>
+        /// <exception cref="Exception">Thrown if the database context is not set, the table name is not specified, or no column values are provided for the update.</exception>
+        private string BuildSql(List<SqliteParameter> parameters)
         {
             // Make sure we have a valid DB driver
-            if (buildCommand && Context == null)
+            if (Context == null)
                 throw new Exception("Cannot build a command when the Context hasn't been specified. Call SetContext first.");
 
-            // Make sure we have a table name
             if (String.IsNullOrWhiteSpace(Table))
                 throw new Exception("Table to update was not set.");
 
-            // Make sure we have at least 1 field to update
             if (Columns.Count == 0)
                 throw new Exception("No column values to update");
 
-            // Start Query
-            var query = new StringBuilder($"UPDATE {Context.QuoteIdentifier(Table)} SET ", 256);
-            var parameters = new List<SqliteParameter>();
+            var query = new StringBuilder("UPDATE ", 256);
+            query.Append(Context.QuoteIdentifier(Table));
+            query.Append(" SET ");
 
-            // Add Fields
             bool first = true;
             foreach (var column in Columns)
             {
-                // Append comma
                 if (!first) query.Append(", ");
                 else first = false;
 
-                // If using a command, Convert values to Parameters
-                if (buildCommand && column.Value.Value != null && column.Value.Value != DBNull.Value && !(column.Value.Value is SqlLiteral))
+                string quotedCol = Context.QuoteIdentifier(column.Key);
+
+                if (parameters != null && column.Value.Value != null && column.Value.Value != DBNull.Value && !(column.Value.Value is SqlLiteral))
                 {
-                    // Create param for value
                     var param = Context.CreateParameter();
                     param.ParameterName = "@P" + parameters.Count;
                     param.Value = column.Value.Value;
-
-                    // Add Params to command
                     parameters.Add(param);
 
-                    // Append Query
                     if (column.Value.Mode == ValueMode.Set)
-                        query.AppendFormat("{0} = {1}", Context.QuoteIdentifier(column.Key), param.ParameterName);
+                    {
+                        query.Append(quotedCol).Append(" = ").Append(param.ParameterName);
+                    }
                     else
-                        query.AppendFormat("{0} = {0} {1} {2}", Context.QuoteIdentifier(column.Key), GetSign(column.Value.Mode), param.ParameterName);
+                    {
+                        query.Append(quotedCol).Append(" = ").Append(quotedCol)
+                             .Append(' ').Append(GetSign(column.Value.Mode)).Append(' ')
+                             .Append(param.ParameterName);
+                    }
                 }
                 else
                 {
+                    string formatted = SqlExpression<WhereStatement>.FormatSQLValue(column.Value.Value);
                     if (column.Value.Mode == ValueMode.Set)
-                        query.AppendFormat("{0} = {1}",
-                            Context.QuoteIdentifier(column.Key), SqlExpression<WhereStatement>.FormatSQLValue(column.Value.Value));
+                    {
+                        query.Append(quotedCol).Append(" = ").Append(formatted);
+                    }
                     else
-                        query.AppendFormat("{0} = {0} {1} {2}", Context.QuoteIdentifier(column.Key),
-                            GetSign(column.Value.Mode), SqlExpression<WhereStatement>.FormatSQLValue(column.Value.Value));
+                    {
+                        query.Append(quotedCol).Append(" = ").Append(quotedCol)
+                             .Append(' ').Append(GetSign(column.Value.Mode)).Append(' ')
+                             .Append(formatted);
+                    }
                 }
             }
 
-            // Append Where
             if (WhereStatement.HasClause)
-                query.Append(" WHERE " + WhereStatement.BuildStatement(parameters));
-
-            // Create Command
-            SqliteCommand command = null;
-            if (buildCommand)
             {
-                command = Context.CreateCommand(query.ToString());
-                command.Parameters.AddRange(parameters.ToArray());
+                query.Append(" WHERE ");
+                query.Append(parameters != null
+                    ? WhereStatement.BuildStatement(parameters)
+                    : WhereStatement.BuildStatement());
             }
 
-            // Return Result
-            return (buildCommand) ? command as object : query.ToString();
+            return query.ToString();
         }
 
         /// <summary>
@@ -257,13 +264,7 @@ namespace CrossLite.QueryBuilder
             }
         }
 
-        public override void Dispose()
-        {
-            WhereStatement = null;
-            Columns = null;
-
-            GC.SuppressFinalize(this);
-        }
+        public override void Dispose() { }
 
         /// <summary>
         /// Internal ColumnValuePair object

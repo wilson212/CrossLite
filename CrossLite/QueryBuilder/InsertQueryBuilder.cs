@@ -54,49 +54,61 @@ namespace CrossLite.QueryBuilder
         #region Query
 
         /// <summary>
-        /// Builds the query string with the current SQL Statement, and returns
-        /// the querystring. This method is NOT Sql Injection safe!
+        /// Builds and returns the SQL query string for the current insert operation.
         /// </summary>
-        /// <returns></returns>
-        public override string BuildQuery() => BuildQuery(false) as String;
+        /// <returns>The constructed SQL query string.</returns>
+        public override string BuildQuery() => BuildSql(null);
 
         /// <summary>
-        /// Builds the query string with the current SQL Statement, and
-        /// returns the DbCommand to be executed. All WHERE paramenters
-        /// are propery escaped, making this command SQL Injection safe.
+        /// Builds a complete SQL command using the current state of the query and its parameters.
         /// </summary>
-        /// <returns></returns>
-        public override SqliteCommand BuildCommand() => BuildQuery(true) as SqliteCommand;
-
-        /// <summary>
-        /// Builds the query string or DbCommand
-        /// </summary>
-        /// <param name="buildCommand"></param>
-        /// <returns></returns>
-        protected object BuildQuery(bool buildCommand)
+        /// <returns>A <see cref="SqliteCommand"/> object that represents the SQL command and its associated parameters.</returns>
+        public override SqliteCommand BuildCommand()
         {
-            // Make sure we have a valid DB driver
-            if (buildCommand && Context == null)
-                throw new Exception("Cannot build a command when the Db Drvier hasn't been specified. Call SetContext first.");
+            var parameters = new List<SqliteParameter>();
+            string sql = BuildSql(parameters);
+            var command = Context.CreateCommand(sql);
+            
+            foreach (var p in parameters)
+                command.Parameters.Add(p);
+            
+            return command;
+        }
 
-            // Make sure we have a table name
+        /// <summary>
+        /// Constructs the SQL INSERT query string based on the specified table and column values.
+        /// </summary>
+        /// <param name="parameters">
+        /// A list of <see cref="SqliteParameter"/> objects that will hold the parameterized values for the query.
+        /// If null, the method builds a non-parameterized query.
+        /// </param>
+        /// <returns>
+        /// A string containing the constructed SQL INSERT query.
+        /// </returns>
+        /// <exception cref="Exception">
+        /// Thrown if the database context is not set, the table name is not specified, or no columns and values are provided for the insert operation.
+        /// </exception>
+        private string BuildSql(List<SqliteParameter> parameters)
+        {
+            if (Context == null)
+                throw new Exception(
+                    "Cannot build a command when the Db Driver hasn't been specified. Call SetContext first.");
+
             if (String.IsNullOrWhiteSpace(Table))
                 throw new Exception("Table to insert into was not set.");
 
-            // Make sure we have at least 1 field to update
             if (Columns.Count == 0)
                 throw new Exception("No column values specified to insert");
 
-            // Start Query
-            StringBuilder query = new StringBuilder($"INSERT INTO {Context.QuoteIdentifier(Table)} (", 256);
+            StringBuilder query = new StringBuilder("INSERT INTO ", 256);
+            query.Append(Context.QuoteIdentifier(Table));
+            query.Append(" (");
+
             StringBuilder values = new StringBuilder();
-            List<SqliteParameter> parameters = new List<SqliteParameter>();
             bool first = true;
 
-            // Add fields and values
-            foreach (KeyValuePair<string, object> Item in Columns)
+            foreach (var Item in Columns)
             {
-                // Append comma
                 if (!first)
                 {
                     query.Append(", ");
@@ -105,18 +117,13 @@ namespace CrossLite.QueryBuilder
                 else
                     first = false;
 
-                // If using a command, Convert values to Parameters
-                if (buildCommand && Item.Value != null && Item.Value != DBNull.Value && !(Item.Value is SqlLiteral))
+                if (parameters != null && Item.Value != null && Item.Value != DBNull.Value && !(Item.Value is SqlLiteral))
                 {
-                    // Create param for value
-                    SqliteParameter Param = Context.CreateParameter();
+                    var Param = Context.CreateParameter();
                     Param.ParameterName = "@P" + parameters.Count;
                     Param.Value = Item.Value;
-
-                    // Add Params to command
                     parameters.Add(Param);
 
-                    // Append query's
                     query.Append(Context.QuoteIdentifier(Item.Key));
                     values.Append(Param.ParameterName);
                 }
@@ -127,19 +134,11 @@ namespace CrossLite.QueryBuilder
                 }
             }
 
-            // Finish the query string, and return the proper object
-            query.AppendFormat(") VALUES ({0})", values);
+            query.Append(") VALUES (");
+            query.Append(values);
+            query.Append(')');
 
-            // Create Command
-            SqliteCommand command = null;
-            if (buildCommand)
-            {
-                command = Context.CreateCommand(query.ToString());
-                command.Parameters.AddRange(parameters.ToArray());
-            }
-
-            // Return Result
-            return (buildCommand) ? command as object : query.ToString();
+            return query.ToString();
         }
 
         /// <summary>
@@ -153,11 +152,7 @@ namespace CrossLite.QueryBuilder
                 return command.ExecuteNonQuery();
         }
 
-        public override void Dispose()
-        {
-            Columns = null;
-            GC.SuppressFinalize(this);
-        }
+        public override void Dispose() { }
 
         #endregion Query
     }

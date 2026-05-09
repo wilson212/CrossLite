@@ -20,6 +20,16 @@ namespace System
         {
             builder.Length = 0;
         }
+        
+        /// <summary>
+        /// Appends a string to this string builder if the <paramref name="predicate"/> is true.
+        /// </summary>
+        public static StringBuilder AppendIf(this StringBuilder builder, bool predicate, string value)
+        {
+            if (predicate)
+                builder.Append(value);
+            return builder;
+        }
 
         /// <summary>
         /// Appends an Object to this string builder if the <paramref name="predicate"/> is true.

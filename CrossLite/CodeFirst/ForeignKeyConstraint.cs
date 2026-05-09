@@ -41,6 +41,19 @@ namespace CrossLite.CodeFirst
         public ForeignKeyAttribute ForeignKey { get; protected set; }
 
         /// <summary>
+        /// A collection of column names mapped to the parent entity's properties
+        /// that are referenced by the foreign key constraint.
+        /// </summary>
+        private HashSet<string> _referenceColumnNames;
+
+        /// <summary>
+        /// Stores the column names within the child table that act as foreign key references
+        /// to the primary key of the parent table. This is lazily initialized when accessed
+        /// and represents the actual database columns involved in the constraint.
+        /// </summary>
+        private HashSet<string> _foreignKeyColumnNames;
+
+        /// <summary>
         /// Creates a new instance of <see cref="ForeignKeyConstraint"/>
         /// </summary>
         /// <param name="child"></param>
@@ -61,7 +74,7 @@ namespace CrossLite.CodeFirst
             this.ChildPropertyName = childPropertyName;
 
             // Ensure the parent and child have the specified properties
-            TableMapping parent = EntityCache.GetTableMap(parentType);
+            TableMapping parent = TableCache.GetTableMap(parentType);
             var invalid = inverseKey.PropertyNames.Except(parent.EntityProperties.Keys);
             if (invalid.Any())
             {
@@ -83,14 +96,17 @@ namespace CrossLite.CodeFirst
         /// will be empty if no reference attributes are defined.</returns>
         public HashSet<string> GetReferenceColumnNames()
         {
-            var returnSet = new HashSet<string>();
-            TableMapping parent = EntityCache.GetTableMap(ParentEntityType);
+            if (_referenceColumnNames != null) return _referenceColumnNames;
+
+            var result = new HashSet<string>();
+            TableMapping parent = TableCache.GetTableMap(ParentEntityType);
             foreach (var attr in Reference.PropertyNames)
             {
-                returnSet.Add(parent.EntityProperties[attr].ColumnName);
+                result.Add(parent.EntityProperties[attr].ColumnName);
             }
 
-            return returnSet;
+            _referenceColumnNames = result;
+            return _referenceColumnNames;
         }
 
         /// <summary>
@@ -102,13 +118,17 @@ namespace CrossLite.CodeFirst
         /// foreign key columns are defined.</returns>
         public HashSet<string> GetForeignKeyColumnNames()
         {
-            var returnSet = new HashSet<string>();
-            TableMapping child = EntityCache.GetTableMap(ChildEntityType);
+            if (_foreignKeyColumnNames != null) return _foreignKeyColumnNames;
+
+            var result = new HashSet<string>();
+            TableMapping child = TableCache.GetTableMap(ChildEntityType);
             foreach (var attr in ForeignKey.PropertyNames)
             {
-                returnSet.Add(child.EntityProperties[attr].ColumnName);
+                result.Add(child.EntityProperties[attr].ColumnName);
             }
-            return returnSet;
+
+            _foreignKeyColumnNames = result;
+            return _foreignKeyColumnNames;
         }
     }
 }

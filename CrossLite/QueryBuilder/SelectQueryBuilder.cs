@@ -196,7 +196,7 @@ namespace CrossLite.QueryBuilder
         public SelectQueryBuilder Select(params string[] columns)
         {
             // Make sure the array isnt empty...
-            if (columns.Count() == 0) return this;
+            if (columns.Length == 0) return this;
 
             // Ensure created with main table index
             if (Tables.Count == 0)
@@ -223,7 +223,7 @@ namespace CrossLite.QueryBuilder
         public SelectQueryBuilder Select(IEnumerable<string> columns)
         {
             // Make sure the array isnt empty...
-            if (columns.Count() == 0) return this;
+            if (!columns.Any()) return this;
 
             // Ensure created with main table index
             if (Tables.Count == 0)
@@ -267,7 +267,7 @@ namespace CrossLite.QueryBuilder
                 if (type != AggregateFunction.Count)
                 {
                     string name = Enum.GetName(typeof(AggregateFunction), type).ToUpperInvariant();
-                    throw new ArgumentException("No column name specified for the aggregate '{name}'", "type");
+                    throw new ArgumentException(@"No column name specified for the aggregate '{name}'", "type");
                 }
                 else
                 {
@@ -278,7 +278,7 @@ namespace CrossLite.QueryBuilder
             else if (type != AggregateFunction.Count && column.Equals("*"))
             {
                 string name = Enum.GetName(typeof(AggregateFunction), type).ToUpperInvariant();
-                throw new ArgumentException($"Cannot use a wildcard in place of an column name for the aggregate '{name}'", "type");
+                throw new ArgumentException($@"Cannot use a wildcard in place of an column name for the aggregate '{name}'", "type");
             }
 
             // Grab the current working table
@@ -460,7 +460,7 @@ namespace CrossLite.QueryBuilder
             // Make sure the count is good
             var table = Tables.Last();
             if (index >= table.Columns.Count)
-                throw new ArgumentOutOfRangeException("Alias index is higher than the column count!", "index");
+                throw new ArgumentOutOfRangeException("Alias index is higher than the column count!", @"index");
 
             // Set alias on item
             table.Columns[index].Alias = alias;
@@ -839,26 +839,40 @@ namespace CrossLite.QueryBuilder
         #endregion
 
         /// <summary>
-        /// Builds the query string with the current SQL Statement, and returns
-        /// the querystring. This method is NOT Sql Injection safe!
+        /// Constructs and returns the SQL query string based on the configured properties of the <see cref="SelectQueryBuilder"/> object.
         /// </summary>
-        /// <returns></returns>
-        public string BuildQuery() => BuildQuery(false) as String;
+        /// <returns>The constructed SQL query string.</returns>
+        public string BuildQuery() => BuildSql(null);
 
         /// <summary>
-        /// Builds the query string with the current SQL Statement, and
-        /// returns the SqliteCommand to be executed. All WHERE and HAVING paramenters
-        /// are propery escaped, making this command SQL Injection safe.
+        /// Builds and returns a configured instance of <see cref="SqliteCommand"/>
+        /// representing the SQL statement and its associated parameters.
         /// </summary>
-        /// <returns></returns>
-        public SqliteCommand BuildCommand() => BuildQuery(true) as SqliteCommand;
+        /// <returns>The <see cref="SqliteCommand"/> object containing the SQL query and parameters prepared for execution.</returns>
+        public SqliteCommand BuildCommand()
+        {
+            var parameters = new List<SqliteParameter>();
+            string sql = BuildSql(parameters);
+            var command = Context.CreateCommand(sql);
+            
+            foreach (var p in parameters)
+                command.Parameters.Add(p);
+            
+            return command;
+        }
 
         /// <summary>
-        /// Builds the query string or SQLiteCommand
+        /// Constructs and returns a SQL query as a string based on the current instance's settings,
+        /// including table names, columns, joins, conditions, grouping, ordering, and limits.
         /// </summary>
-        /// <param name="buildCommand"></param>
-        /// <returns></returns>
-        protected object BuildQuery(bool buildCommand)
+        /// <param name="parameters">
+        /// A list of <see cref="SqliteParameter"/> objects that will be filled with parameterized query values
+        /// while constructing the SQL query.
+        /// </param>
+        /// <returns>
+        /// A string representing the complete SQL query ready to be executed against a database.
+        /// </returns>
+        private string BuildSql(List<SqliteParameter> parameters)
         {
             // Define local variables
             int tableIndex = 0;
@@ -875,30 +889,23 @@ namespace CrossLite.QueryBuilder
             // Append columns from each table
             foreach (var table in Tables)
             {
-                // Define local variables
                 int colCount = table.Columns.Count;
                 tableIndex++;
                 tableCount--;
 
-                // Create alias for this table if there is none
                 if (String.IsNullOrWhiteSpace(table.Alias))
                     table.Alias = $"t{tableIndex}";
 
-                // Check if the user wants to select all columns
                 if (colCount == 0)
                 {
-                    query.AppendFormat("{0}.*", Context.QuoteIdentifier(table.Alias));
+                    query.Append(Context.QuoteIdentifier(table.Alias)).Append(".*");
                     query.AppendIf(tableCount > 0, ", ");
                 }
                 else
                 {
-                    // Add each result selector to the query
                     foreach (ColumnIdentifier column in table.Columns.Values)
                     {
-                        // Use the internal method to append the column string to our query
                         column.AppendToQuery(query, Context, table.Alias);
-
-                        // If we have more results to select, append Comma
                         query.AppendIf(--colCount > 0 || tableCount > 0, ", ");
                     }
                 }
@@ -906,14 +913,16 @@ namespace CrossLite.QueryBuilder
 
             // === Append main Table === //
             var fromTbl = Tables[0];
-            query.Append($" FROM {Context.QuoteIdentifier(fromTbl.Name)} AS {Context.QuoteIdentifier(fromTbl.Alias)}");
+            query.Append(" FROM ");
+            query.Append(Context.QuoteIdentifier(fromTbl.Name));
+            query.Append(" AS ");
+            query.Append(Context.QuoteIdentifier(fromTbl.Alias));
 
             // Append Joined tables
             if (Joins.Count > 0)
             {
-                foreach (JoinClause clause in Joins)
+                foreach (var clause in Joins)
                 {
-                    // Convert join type to string
                     switch (clause.JoinType)
                     {
                         default:
@@ -931,14 +940,13 @@ namespace CrossLite.QueryBuilder
                             break;
                     }
 
-                    // Append the join statement
                     string alias = Context.QuoteIdentifier(clause.JoiningTable.Alias);
-                    query.Append($"{Context.QuoteIdentifier(clause.JoiningTable.Name)} AS {alias}");
+                    query.Append(Context.QuoteIdentifier(clause.JoiningTable.Name));
+                    query.Append(" AS ");
+                    query.Append(alias);
 
-                    // Do we have an expression?
                     if (clause.ExpressionType == JoinExpressionType.On)
                     {
-                        // Try and grab the table
                         var tbl = Tables.Where(x => x.Name.Equals(clause.FromTable, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
                         string fromT = tbl?.Alias ?? clause.FromTable;
                         query.Append(" ON ");
@@ -953,24 +961,28 @@ namespace CrossLite.QueryBuilder
                     else if (clause.ExpressionType == JoinExpressionType.Using)
                     {
                         var parts = clause.JoiningColumn.Split(',');
-                        query.AppendFormat(" USING({0})", String.Join(", ", parts.Select(x => Context.QuoteIdentifier(x))));
+                        query.Append(" USING(");
+                        query.Append(string.Join(", ", parts.Select(x => Context.QuoteIdentifier(x))));
+                        query.Append(')');
                     }
                 }
             }
 
             // Append Where Statement
-            List<SqliteParameter> parameters = new List<SqliteParameter>();
             if (WhereStatement.HasClause)
             {
-                if (buildCommand)
-                    query.Append(" WHERE " + WhereStatement.BuildStatement(parameters));
-                else
-                    query.Append(" WHERE " + WhereStatement.BuildStatement());
+                query.Append(" WHERE ");
+                query.Append(parameters != null
+                    ? WhereStatement.BuildStatement(parameters)
+                    : WhereStatement.BuildStatement());
             }
 
             // Append GroupBy
             if (GroupByColumns.Count > 0)
-                query.Append(" GROUP BY " + String.Join(", ", GroupByColumns.Select(x => Context.QuoteIdentifier(x))));
+            {
+                query.Append(" GROUP BY ");
+                query.Append(string.Join(", ", GroupByColumns.Select(x => Context.QuoteIdentifier(x))));
+            }
 
             // Append Having
             if (HavingStatement.HasClause)
@@ -978,7 +990,11 @@ namespace CrossLite.QueryBuilder
                 if (GroupByColumns.Count == 0)
                     throw new Exception("Having statement was set without Group By");
 
-                query.Append(" HAVING " + HavingStatement.BuildStatement(parameters));
+                query.Append(" HAVING ");
+                // Having always uses parameters if available
+                query.Append(parameters != null
+                    ? HavingStatement.BuildStatement(parameters)
+                    : HavingStatement.BuildStatement());
             }
 
             // Append OrderBy
@@ -986,14 +1002,11 @@ namespace CrossLite.QueryBuilder
             {
                 int count = OrderByStatements.Count;
                 query.Append(" ORDER BY");
-                foreach (OrderByClause clause in OrderByStatements)
+                foreach (var clause in OrderByStatements)
                 {
-                    query.Append($" {Context.QuoteIdentifier(clause.ColumnName)}");
-
-                    // Add sorting if not default
+                    query.Append(' ');
+                    query.Append(Context.QuoteIdentifier(clause.ColumnName));
                     query.AppendIf(clause.SortOrder == Sorting.Descending, " DESC");
-
-                    // Append seperator if we have more orderby statements
                     query.AppendIf(--count > 0, ",");
                 }
             }
@@ -1002,16 +1015,7 @@ namespace CrossLite.QueryBuilder
             query.AppendIf(Limit > 0, " LIMIT " + Limit);
             query.AppendIf(Offset > 0, " OFFSET " + Offset);
 
-            // Create Command
-            SqliteCommand command = null;
-            if (buildCommand)
-            {
-                command = Context.CreateCommand(query.ToString());
-                command.Parameters.AddRange(parameters.ToArray());
-            }
-
-            // Return Result
-            return (buildCommand) ? command as object : query.ToString();
+            return query.ToString();
         }
 
         /// <summary>
@@ -1046,16 +1050,6 @@ namespace CrossLite.QueryBuilder
             return Context.ExecuteReader<T>(BuildCommand());
         }
 
-        public void Dispose()
-        {
-            Tables = null;
-            Joins = null;
-            GroupByColumns = null;
-            OrderByStatements = null;
-            Unions = null;
-            WhereStatement = null;
-
-            GC.SuppressFinalize(this);
-        }
+        public void Dispose() { }
     }
 }

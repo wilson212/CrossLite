@@ -13,7 +13,7 @@ namespace CrossLite.Collections
     /// <typeparam name="T">The type of objects to compare.</typeparam>
     internal class Comparer2<T> : Comparer<T>
     {
-        //private readonly Func<T, T, int> _compareFunction;
+        //private readonly Func<TEntity, TEntity, int> _compareFunction;
         private readonly Comparison<T> _compareFunction;
 
         #region Constructors

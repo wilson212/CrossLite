@@ -204,7 +204,7 @@ namespace CrossLite.QueryBuilder
         public TWhere In<T>(params T[] values) where T : struct
         {
             ComparisonOperator = Comparison.In;
-            Value = values.Select(x => GetUnderlyingValue(x));
+            Value = values.Select(x => GetUnderlyingValue(x)).ToArray();
             return Statement;
         }
 
@@ -223,8 +223,8 @@ namespace CrossLite.QueryBuilder
         /// </summary>
         public TWhere In<T>(IEnumerable<T> values) where T : struct
         {
-            ComparisonOperator = Comparison.NotIn;
-            Value = values.Select(x => GetUnderlyingValue(x));
+            ComparisonOperator = Comparison.In;
+            Value = values.Select(x => GetUnderlyingValue(x)).ToArray();
             return Statement;
         }
 
@@ -244,7 +244,7 @@ namespace CrossLite.QueryBuilder
         public TWhere NotIn<T>(params T[] values) where T : struct
         {
             ComparisonOperator = Comparison.NotIn;
-            Value = values.Select(x => GetUnderlyingValue(x));
+            Value = values.Select(x => GetUnderlyingValue(x)).ToArray();
             return Statement;
         }
 
@@ -264,7 +264,7 @@ namespace CrossLite.QueryBuilder
         public TWhere NotIn<T>(IEnumerable<T> values) where T : struct
         {
             ComparisonOperator = Comparison.NotIn;
-            Value = values.Select(x => GetUnderlyingValue(x));
+            Value = values.Select(x => GetUnderlyingValue(x)).ToArray();
             return Statement;
         }
 
@@ -307,27 +307,24 @@ namespace CrossLite.QueryBuilder
                 //--------------------------------------
                 if (ComparisonOperator == Comparison.Between || ComparisonOperator == Comparison.NotBetween)
                 {
-                    // Add the between values to the command parameters
                     Array between = ((Array)Value);
+                    int offset = parameters.Count;
 
                     var param1 = new SqliteParameter();
                     param1.ParameterName = "@P" + parameters.Count;
                     param1.Value = between.GetValue(0);
+                    parameters.Add(param1);
 
                     var param2 = new SqliteParameter();
-                    param2.ParameterName = "@P" + (parameters.Count + 1);
+                    param2.ParameterName = "@P" + parameters.Count;
                     param2.Value = between.GetValue(1);
-
-                    // Add Params to command
-                    parameters.Add(param1);
                     parameters.Add(param2);
 
-                    // Add statement
-                    return CreateExpressionString(param1, param2);
+                    return CreateExpressionString(parameters, offset);
                 }
                 else if (ComparisonOperator == Comparison.In || ComparisonOperator == Comparison.NotIn)
                 {
-                    // Add the between values to the command parameters
+                    // Add the IN values to the command parameters
                     Array values = ((Array)Value);
                     int offset = parameters.Count;
 
@@ -339,8 +336,8 @@ namespace CrossLite.QueryBuilder
                         parameters.Add(param);
                     }
 
-                    // Add statement
-                    return CreateExpressionString(parameters.Skip(offset).ToArray());
+                    // Build the expression string using offset instead of Skip().ToArray()
+                    return CreateExpressionString(parameters, offset);
                 }
                 // --------------------------------------
                 // All Other Clauses
@@ -410,31 +407,40 @@ namespace CrossLite.QueryBuilder
                     throw new Exception($"The operator {name} does not support just 1 SQLiteParameter.");
             }
         }
-
+        
         /// <summary>
-        /// Creates an SQL expression with the values of the <see cref="SqliteParameter.ParameterName"/>'s. 
+        /// Creates an SQL expression for IN/BETWEEN using parameters from the given offset.
+        /// Avoids allocating a new array via Skip().ToArray().
         /// </summary>
-        private string CreateExpressionString(params SqliteParameter[] parameters)
+        private string CreateExpressionString(List<SqliteParameter> parameters, int offset)
         {
-            // Correct ColumnName and define variables
             string fieldName = SQLiteContext.QuoteIdentifier(Identifier, Statement.AttributeQuoteMode, Statement.AttributeQuoteKind);
+            int count = parameters.Count - offset;
+
             switch (ComparisonOperator)
             {
                 case Comparison.In:
-                    return $"{fieldName} IN ({String.Join(", ", parameters.Select(x => x.ParameterName))})";
                 case Comparison.NotIn:
-                    return $"{fieldName} NOT IN ({String.Join(", ", parameters.Select(x => x.ParameterName))})";
+                    var sb = new StringBuilder(fieldName);
+                    sb.Append(ComparisonOperator == Comparison.NotIn ? " NOT IN (" : " IN (");
+                    for (int i = offset; i < parameters.Count; i++)
+                    {
+                        if (i > offset) sb.Append(", ");
+                        sb.Append(parameters[i].ParameterName);
+                    }
+                    sb.Append(')');
+                    return sb.ToString();
+
                 case Comparison.Between:
                 case Comparison.NotBetween:
-                    // Ensure length
-                    if (parameters.Length != 2)
-                        throw new ArgumentException($"Invalid parameter count. Expecting 2 got {parameters.Length}.", "parameters");
+                    if (count != 2)
+                        throw new ArgumentException($@"Invalid parameter count. Expecting 2 got {count}.", nameof(parameters));
 
-                    // Build sql
-                    StringBuilder builder = new StringBuilder(fieldName);
+                    var builder = new StringBuilder(fieldName);
                     builder.AppendIf(ComparisonOperator == Comparison.NotBetween, " NOT BETWEEN ", " BETWEEN ");
-                    builder.Append(parameters[0].ParameterName).Append(" AND ").Append(parameters[1].ParameterName);
+                    builder.Append(parameters[offset].ParameterName).Append(" AND ").Append(parameters[offset + 1].ParameterName);
                     return builder.ToString();
+
                 default:
                     string name = Enum.GetName(typeof(Comparison), ComparisonOperator);
                     throw new Exception($"The operator {name} does not support multiple SQLiteParameters.");
@@ -582,26 +588,25 @@ namespace CrossLite.QueryBuilder
         public static string FormatSQLValue(object someValue)
         {
             // Just return null if our value is null
-            if (someValue == null) return "NULL";
+            if (someValue == null || someValue is DBNull) return "NULL";
 
             // Check for numbers first
             Type valType = someValue.GetType();
             if (valType.IsNumericType())
                 return someValue.ToString();
 
-            // Not a numeric, so...
-            switch (valType.Name)
+            // Pattern matching — JIT-optimized, no string allocation from Type.Name
+            return someValue switch
             {
-                default:
-                case "String": return $"'{someValue.ToString().Replace("'", "''")}'";
-                case "SqlLiteral": return ((SqlLiteral)someValue).Value;
-                case "DateTime": return $"'{((DateTime)someValue).ToString("yyyy-MM-dd HH:mm:ss")}'";
-                case "DBNull": return "NULL";
-                case "Boolean": return (bool)someValue ? "1" : "0";
-                case "Guid": return $"'{((Guid)someValue).ToString()}'";
-                case "SelectQueryBuilder":
-                    throw new ArgumentException("Using SelectQueryBuilder in another Querybuilder statement is unsupported!", "someValue");
-            }
+                SqlLiteral lit => lit.Value,
+                string s => $"'{s.Replace("'", "''")}'",
+                DateTime dt => $"'{dt:yyyy-MM-dd HH:mm:ss}'",
+                bool b => b ? "1" : "0",
+                Guid g => $"'{g}'",
+                SelectQueryBuilder => throw new ArgumentException(
+                    @"Using SelectQueryBuilder in another Querybuilder statement is unsupported!", nameof(someValue)),
+                _ => $"'{someValue.ToString().Replace("'", "''")}'",
+            };
         }
     }
 }

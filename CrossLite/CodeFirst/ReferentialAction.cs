@@ -16,7 +16,7 @@
     ///         primary table.
     ///     </para>
     /// </summary>
-    public enum ReferentialIntegrity
+    public enum ReferentialAction
     {
         /// <summary>
         /// When a parent key is modified or deleted from the database, 
