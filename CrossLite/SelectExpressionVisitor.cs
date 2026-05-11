@@ -97,8 +97,20 @@ namespace CrossLite
                 var args = new Expression[newExpr.Arguments.Count];
                 for (int i = 0; i < newExpr.Arguments.Count; i++)
                 {
-                    Type targetType = newExpr.Arguments[i].Type;
-                    args[i] = BuildReadExpression(readerParam, ordinalsParam, i, targetType);
+                    var arg = newExpr.Arguments[i];
+
+                    if (arg is MethodCallExpression mc && mc.Object != null)
+                    {
+                        // Read the raw DB column as the property's type, then apply the method
+                        Type dbType = GetUnderlyingPropertyType(mc.Object);
+                        var rawRead = BuildReadExpression(readerParam, ordinalsParam, i, dbType);
+                        args[i] = Expression.Call(rawRead, mc.Method);
+                    }
+                    else
+                    {
+                        Type targetType = arg.Type;
+                        args[i] = BuildReadExpression(readerParam, ordinalsParam, i, targetType);
+                    }
                 }
 
                 var newCall = Expression.New(newExpr.Constructor, args, newExpr.Members);
@@ -128,8 +140,18 @@ namespace CrossLite
                 {
                     if (memberInit.Bindings[i] is MemberAssignment assignment)
                     {
-                        Type targetType = assignment.Expression.Type;
-                        var readExpr = BuildReadExpression(readerParam, ordinalsParam, argOffset + i, targetType);
+                        Expression readExpr;
+                        if (assignment.Expression is MethodCallExpression mc && mc.Object != null)
+                        {
+                            Type dbType = GetUnderlyingPropertyType(mc.Object);
+                            var rawRead = BuildReadExpression(readerParam, ordinalsParam, argOffset + i, dbType);
+                            readExpr = Expression.Call(rawRead, mc.Method);
+                        }
+                        else
+                        {
+                            Type targetType = assignment.Expression.Type;
+                            readExpr = BuildReadExpression(readerParam, ordinalsParam, argOffset + i, targetType);
+                        }
                         bindings.Add(Expression.Bind(assignment.Member, readExpr));
                     }
                 }
@@ -187,6 +209,15 @@ namespace CrossLite
                     getValue, Expression.Constant(enumBase));
                 convertedValue = Expression.Convert(Expression.Convert(changeType, enumBase), effectiveType);
             }
+            else if (effectiveType.IsValueType)
+            {
+                // Use Convert.ChangeType to safely handle SQLite's Int64 → Int32, etc.
+                var changeType = Expression.Call(
+                    typeof(Convert), "ChangeType",
+                    Type.EmptyTypes,
+                    getValue, Expression.Constant(effectiveType));
+                convertedValue = Expression.Convert(changeType, effectiveType);
+            }
             else
             {
                 convertedValue = Expression.Convert(getValue, effectiveType);
@@ -214,12 +245,28 @@ namespace CrossLite
                 return convertedValue;
             }
         }
+        
+        private static Type GetUnderlyingPropertyType(Expression expr)
+        {
+            if (expr is UnaryExpression unary && unary.NodeType == ExpressionType.Convert)
+                expr = unary.Operand;
+
+            return expr.Type;
+        }
 
         private static (string ColumnName, string PropertyName) ResolveColumn<TEntity>(
             TableMapping table, Expression expr)
         {
             if (expr is UnaryExpression unary && unary.NodeType == ExpressionType.Convert)
                 expr = unary.Operand;
+
+            // NEW: Unwrap method calls like x.Type.ToString() → x.Type
+            if (expr is MethodCallExpression methodCall && methodCall.Object != null)
+                expr = methodCall.Object;
+
+            // Unwrap again in case of Convert wrapping the member
+            if (expr is UnaryExpression unary2 && unary2.NodeType == ExpressionType.Convert)
+                expr = unary2.Operand;
 
             if (expr is MemberExpression member && member.Member is PropertyInfo prop)
             {
