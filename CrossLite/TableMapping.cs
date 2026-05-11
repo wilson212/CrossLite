@@ -328,6 +328,11 @@ namespace CrossLite
             PrimaryKeys = [.. primaryKeys.OrderBy(x => x.Order)];
             PrimaryKeyPropertyNames = PrimaryKeys.Select(x => x.Property.Name).ToFrozenSet();
             var foreignKeys = new HashSet<ForeignKeyConstraint>();
+            
+            // *** ADD THIS LINE ***
+            // Pre-register ourselves so circular references find a usable partial mapping
+            // that already has EntityProperties, DatabaseColumns, and PrimaryKeys populated.
+            TableCache.RegisterPartial(EntityType, this);
 
             // ------------------------------------
             // Always check foreign keys after setting the DatabaseColumns property!
@@ -397,7 +402,10 @@ namespace CrossLite
             foreach (var rel in ChildRelationships)
             {
                 var childTable = TableCache.GetTableMap(rel.Value);
-                var fk = childTable.ForeignKeys.FirstOrDefault(f => f.ParentEntityType == EntityType);
+                
+                // If the child mapping is still partially constructed (circular reference),
+                // its ForeignKeys won't be populated yet — skip it safely.
+                var fk = childTable?.ForeignKeys?.FirstOrDefault(f => f.ParentEntityType == EntityType);
                 if (fk == null) continue;
 
                 foreach (var refProp in fk.Reference.PropertyNames)

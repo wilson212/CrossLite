@@ -20,6 +20,16 @@ namespace CrossLite
         {
             Mappings = new ConcurrentDictionary<Type, TableMapping>();
         }
+        
+        /// <summary>
+        /// Registers a partially-constructed mapping so that re-entrant calls
+        /// during construction can find it instead of getting null.
+        /// Called from inside the TableMapping constructor.
+        /// </summary>
+        internal static void RegisterPartial(Type type, TableMapping mapping)
+        {
+            Mappings.TryAdd(type, mapping);
+        }
 
         /// <summary>
         /// Gets or Creates a new <see cref="TableMapping"/> for the provided
@@ -29,7 +39,18 @@ namespace CrossLite
         /// <returns></returns>
         public static TableMapping GetTableMap(Type objType)
         {
-            return Mappings.GetOrAdd(objType, type => new TableMapping(type));
+            // If it's already cached (fully or partially), return it
+            if (Mappings.TryGetValue(objType, out var existing))
+                return existing;
+
+            // Construct — the constructor will call RegisterPartial() 
+            // early, before processing child relationships
+            var mapping = new TableMapping(objType);
+        
+            // Ensure final version is stored (RegisterPartial may have 
+            // already added it; TryAdd is idempotent for same key)
+            Mappings.TryAdd(objType, mapping);
+            return Mappings[objType];
         }
     }
 }

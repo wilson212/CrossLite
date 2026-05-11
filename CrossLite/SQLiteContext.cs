@@ -995,6 +995,7 @@ namespace CrossLite
 
             // Update entity state
             entity.State = EntityState.Fresh;
+            entity.DirtyProperties.Clear();
 
             // Add object
             return entity;
