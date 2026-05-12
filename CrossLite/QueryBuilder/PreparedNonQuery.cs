@@ -59,6 +59,9 @@ namespace CrossLite.QueryBuilder
         /// <returns></returns>
         public PreparedNonQuery SetParam(string name, object value)
         {
+            // Ensure we have a valid value, defaulting to DBNull if null
+            value ??= DBNull.Value;  
+            
             SqliteParameter param;
             if (Params.TryGetValue(name, out param))
             {
