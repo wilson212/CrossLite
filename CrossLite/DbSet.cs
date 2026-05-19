@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 
@@ -242,6 +243,39 @@ namespace CrossLite
                 new List<(string, bool)>(),
                 null, null,
                 columns, projector);
+        }
+        
+        /// <summary>
+        /// Determines whether the table contains any entities.
+        /// Executes: SELECT EXISTS(SELECT 1 FROM [Table] LIMIT 1)
+        /// </summary>
+        /// <returns>true if at least one entity exists; otherwise, false.</returns>
+        public bool Any()
+        {
+            string table = Context.QuoteIdentifier(EntityTable.TableName);
+            string sql = $"SELECT EXISTS(SELECT 1 FROM {table} LIMIT 1)";
+            return Context.ExecuteScalar<int>(sql) == 1;
+        }
+        
+        /// <summary>
+        /// Determines whether any entity in the table matches the specified predicate.
+        /// Executes: SELECT EXISTS(SELECT 1 FROM [Table] WHERE ... LIMIT 1)
+        /// </summary>
+        /// <param name="predicate">A LINQ expression to filter entities.</param>
+        /// <returns>true if at least one matching entity exists; otherwise, false.</returns>
+        public bool Any(Expression<Func<TEntity, bool>> predicate)
+        {
+            var visitor = new WhereExpressionVisitor<TEntity>();
+            string whereClause = visitor.Translate(predicate);
+
+            string table = Context.QuoteIdentifier(EntityTable.TableName);
+            string sql = $"SELECT EXISTS(SELECT 1 FROM {table} WHERE {whereClause} LIMIT 1)";
+
+            using var command = Context.CreateCommand(sql);
+            foreach (var p in visitor.Parameters)
+                command.Parameters.Add(p);
+
+            return Context.ExecuteScalar<int>(command) == 1;
         }
 
         /// <summary>

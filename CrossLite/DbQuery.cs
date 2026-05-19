@@ -108,18 +108,28 @@ namespace CrossLite
 
         /// <summary>
         /// Convenience: returns the first match or default.
-        /// Internally appends LIMIT 1.
         /// </summary>
         public TEntity FirstOrDefault()
         {
+            var oldLimit = _limit;
             _limit = 1;
-            return Execute().FirstOrDefault();
+            var result = Execute().FirstOrDefault();
+            _limit = oldLimit;
+            return result;
         }
 
         /// <summary>
         /// Materializes the query into a list.
         /// </summary>
         public List<TEntity> ToList() => Execute().ToList();
+
+        /// <summary>
+        /// Determines whether any elements exist in the query result.
+        /// </summary>
+        /// <returns>
+        /// true if the query contains at least one element; otherwise, false.
+        /// </returns>
+        public bool Any() => FirstOrDefault() != null;
 
         /// <summary>
         /// Builds the final SQL and executes it.

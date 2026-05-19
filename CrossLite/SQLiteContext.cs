@@ -61,7 +61,7 @@ namespace CrossLite
         public IdentifierQuoteKind IdentifierQuoteKind { get; set; } = DefaultIdentifierQuoteKind;
 
         /// <summary>
-        /// Contains the conenction string used to open this connection
+        /// Contains the connection string used to open this connection
         /// </summary>
         public string ConnectionString { get; private set; }
 
