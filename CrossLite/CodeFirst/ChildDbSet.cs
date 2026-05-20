@@ -190,15 +190,20 @@ namespace CrossLite.CodeFirst
             SQLiteContext context = null;
             wasOpen = false;
 
-            // If we already have a context, use it
-            if (Context.IsConnected())
+            // Priority 1: Use the ambient transactional context (Single Global Transaction Context)
+            if (SQLiteContext.Ambient != null && SQLiteContext.Ambient.IsConnected())
+            {
+                wasOpen = true;
+                context = SQLiteContext.Ambient;
+            }
+            // Priority 2: Use the stored context if still connected
+            else if (Context.IsConnected())
             {
                 wasOpen = true;
                 context = Context;
             }
             else
             {
-                // Open new connection
                 context = new SQLiteContext(ConnectionString);
                 context.Connect();
             }
@@ -572,11 +577,11 @@ namespace CrossLite.CodeFirst
                     ts?.Rollback();
                     throw;
                 }
-            }
-
-            if (!wasOpen)
-            {
-                context.Dispose();
+                finally
+                {
+                    if (!wasOpen)
+                        context.Dispose();
+                }
             }
         }
 
@@ -591,23 +596,31 @@ namespace CrossLite.CodeFirst
             bool wasOpen = false;
             SQLiteContext context = LazyLoad(ref wasOpen);
 
-            using var query = new UpdateQueryBuilder(context);
-            query.SetTable(ChildTable.TableName);
-
-            foreach (var group in ForeignKeyValues)
+            try
             {
-                foreach (var kvp in group)
+                using var query = new UpdateQueryBuilder(context);
+                query.SetTable(ChildTable.TableName);
+
+                foreach (var group in ForeignKeyValues)
                 {
-                    query.Set(kvp.Key, null);
-                    query.WhereStatement.And(kvp.Key, Comparison.Equals, kvp.Value);
+                    foreach (var kvp in group)
+                    {
+                        query.Set(kvp.Key, null);
+                        query.WhereStatement.And(kvp.Key, Comparison.Equals, kvp.Value);
+                    }
+                    query.WhereStatement.CreateNewClause();
                 }
-                query.WhereStatement.CreateNewClause();
+
+                query.Execute();
+
+                if (context.UseIdentityMapping)
+                    context.ClearIdentityMap(typeof(TChildEntity));
             }
-
-            query.Execute();
-
-            if (context.UseIdentityMapping)
-                context.ClearIdentityMap(typeof(TChildEntity));
+            finally
+            {
+                if (!wasOpen)
+                    context.Dispose();
+            }
         }
 
         /// <summary>

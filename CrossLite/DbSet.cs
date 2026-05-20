@@ -401,6 +401,36 @@ namespace CrossLite
 
             return result;
         }
+        
+        /// <summary>
+        /// Deletes all entities matching the specified predicate directly in the database.
+        /// This executes a single DELETE statement — no entities are loaded into memory.
+        /// </summary>
+        /// <param name="predicate">A LINQ expression that identifies which entities to delete.</param>
+        /// <returns>The number of rows deleted.</returns>
+        public int Remove(Expression<Func<TEntity, bool>> predicate)
+        {
+            ArgumentNullException.ThrowIfNull(predicate);
+
+            var visitor = new WhereExpressionVisitor<TEntity>();
+            string whereClause = visitor.Translate(predicate);
+
+            string table = Context.QuoteIdentifier(EntityTable.TableName);
+            string sql = $"DELETE FROM {table} WHERE {whereClause}";
+
+            using var command = Context.CreateCommand(sql);
+            foreach (var p in visitor.Parameters)
+                command.Parameters.Add(p);
+
+            int affected = command.ExecuteNonQuery();
+
+            if (affected > 0 && Context.UseIdentityMapping)
+            {
+                Context.ClearIdentityMap(typeof(TEntity));
+            }
+
+            return affected;
+        }
 
         /// <summary>
         /// Deletes a range of Entities from the database
@@ -748,6 +778,16 @@ namespace CrossLite
         }
         
         /// <summary>
+        /// Finds the first entity matching the specified predicate, or null if no match is found.
+        /// </summary>
+        /// <param name="predicate">A LINQ expression to filter entities.</param>
+        /// <returns>The first matching entity, or <see langword="null"/> if none found.</returns>
+        public TEntity Find(Expression<Func<TEntity, bool>> predicate)
+        {
+            return Where(predicate).FirstOrDefault();
+        }
+        
+        /// <summary>
         /// Finds all entities matching a partial composite key.
         /// The provided key values are matched in order against the entity's primary keys.
         /// </summary>
@@ -802,6 +842,16 @@ namespace CrossLite
             foreach (var p in parameters)
                 command.Parameters.Add(p);
             return Context.ExecuteReader<TEntity>(command);
+        }
+        
+        /// <summary>
+        /// Finds all entities matching the specified predicate.
+        /// </summary>
+        /// <param name="predicate">A LINQ expression to filter entities.</param>
+        /// <returns>A list of all matching entities.</returns>
+        public List<TEntity> FindAll(Expression<Func<TEntity, bool>> predicate)
+        {
+            return Where(predicate).ToList();
         }
 
         /// <summary>

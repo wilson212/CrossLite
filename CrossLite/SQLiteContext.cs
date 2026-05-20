@@ -11,6 +11,7 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 
 namespace CrossLite
 {
@@ -81,6 +82,17 @@ namespace CrossLite
         /// 
         /// </summary>
         internal Dictionary<Type, Dictionary<EntityKey, EntityBase>> EntityIdentityMap { get; } = [];
+        
+        /// <summary>
+        /// The ambient SQLiteContext for the current async/thread flow.
+        /// Used by ChildDbSet to automatically resolve the active transactional context.
+        /// </summary>
+        private static readonly AsyncLocal<SQLiteContext> _ambient = new();
+
+        /// <summary>
+        /// Gets the current ambient SQLiteContext, if one has been set via <see cref="BeginTransaction"/>.
+        /// </summary>
+        public static SQLiteContext Ambient => _ambient.Value;
 
         /// <summary>
         /// Creates a new connection to an SQLite Database
@@ -820,8 +832,10 @@ namespace CrossLite
             if (Transaction != null)
                 throw new InvalidOperationException("A transaction is already in progress on this connection.");
 
+            var previous = _ambient.Value;
+            _ambient.Value = this;                          // ← add this
             Transaction = Connection.BeginTransaction();
-            return new TransactionScope(this);
+            return new TransactionScope(this, previous);    // ← pass previous
         }
 
         /// <summary>
@@ -1433,10 +1447,12 @@ namespace CrossLite
         public class TransactionScope : IDisposable
         {
             private readonly SQLiteContext _context;
+            private readonly SQLiteContext _previous;
 
-            internal TransactionScope(SQLiteContext context)
+            internal TransactionScope(SQLiteContext context, SQLiteContext previous)
             {
                 _context = context;
+                _previous = previous;
             }
 
             public void Commit()
@@ -1464,6 +1480,7 @@ namespace CrossLite
                 {
                     _context.RollbackTransaction();
                 }
+                _ambient.Value = _previous;    // ← restore previous ambient
             }
         }
     }
