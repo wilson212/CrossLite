@@ -131,6 +131,32 @@ namespace CrossLite
                         return VisitLike(node, methodName == "NotLike");
                 }
             }
+            
+            // Support: someList.Contains(x.Property)
+            if (methodName == "Contains" && node.Arguments.Count == 1 && node.Object != null)
+            {
+                // Instance method: List<T>.Contains(item)
+                string columnName = ResolveColumnName(node.Arguments[0]);
+                string col = QuoteColumn(columnName);
+                object rawValues = ResolveValue(node.Object);
+                var enumerable = rawValues as IEnumerable
+                                 ?? throw new NotSupportedException("Contains requires an IEnumerable instance.");
+
+                var paramNames = new List<string>();
+                foreach (object item in enumerable)
+                {
+                    object val = item;
+                    if (val != null && val.GetType().IsEnum)
+                        val = Convert.ChangeType(val, Enum.GetUnderlyingType(val.GetType()));
+
+                    string paramName = $"@P{_parameters.Count}";
+                    _parameters.Add(new SqliteParameter(paramName, val));
+                    paramNames.Add(paramName);
+                }
+
+                _sqlFragments.Push($"{col} IN ({string.Join(", ", paramNames)})");
+                return node;
+            }
 
             throw new NotSupportedException($"Method '{methodName}' is not supported in expression trees.");
         }

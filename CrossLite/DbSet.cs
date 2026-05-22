@@ -408,7 +408,7 @@ namespace CrossLite
         /// </summary>
         /// <param name="predicate">A LINQ expression that identifies which entities to delete.</param>
         /// <returns>The number of rows deleted.</returns>
-        public int Remove(Expression<Func<TEntity, bool>> predicate)
+        public int RemoveWhere(Expression<Func<TEntity, bool>> predicate)
         {
             ArgumentNullException.ThrowIfNull(predicate);
 
@@ -420,6 +420,36 @@ namespace CrossLite
 
             using var command = Context.CreateCommand(sql);
             foreach (var p in visitor.Parameters)
+                command.Parameters.Add(p);
+
+            int affected = command.ExecuteNonQuery();
+
+            if (affected > 0 && Context.UseIdentityMapping)
+            {
+                Context.ClearIdentityMap(typeof(TEntity));
+            }
+
+            return affected;
+        }
+
+        /// <summary>
+        /// Deletes rows from the database table corresponding to the entity set
+        /// that match the specified <see cref="WhereStatement"/> condition.
+        /// </summary>
+        /// <param name="statement">The <see cref="WhereStatement"/> that defines the condition
+        /// to select the rows to be deleted.</param>
+        /// <returns>The number of rows affected by the DELETE operation.</returns>
+        /// <exception cref="ArgumentNullException">Thrown if the provided <paramref name="statement"/> is null.</exception>
+        public int RemoveWhere(WhereStatement statement)
+        {
+            ArgumentNullException.ThrowIfNull(statement);
+
+            string whereClause = statement.BuildStatement(out var parameters);
+            string table = Context.QuoteIdentifier(EntityTable.TableName);
+            string sql = $"DELETE FROM {table} WHERE {whereClause}";
+
+            using var command = Context.CreateCommand(sql);
+            foreach (var p in parameters)
                 command.Parameters.Add(p);
 
             int affected = command.ExecuteNonQuery();
