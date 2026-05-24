@@ -26,11 +26,17 @@ namespace CrossLite.CodeFirst
 
         public DefaultAttribute(object val)
         {
+            // Convert enums to their underlying numeric value so DDL writes "DEFAULT 0" not "DEFAULT GeneralStaff"
+            if (val != null && val.GetType().IsEnum)
+            {
+                val = Convert.ChangeType(val, Enum.GetUnderlyingType(val.GetType()));
+            }
+
             this.Value = val;
             if (val == null)
             {
                 this.SQLiteDataType = SQLiteDataType.NULL;
-                this.Quote = false; // NULL does not need quoting
+                this.Quote = false;
                 return;
             }
             this.SQLiteDataType = SQLiteContext.GetSQLiteType(val.GetType());

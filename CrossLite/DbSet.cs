@@ -277,6 +277,29 @@ namespace CrossLite
 
             return Context.ExecuteScalar<int>(command) == 1;
         }
+        
+        /// <summary>
+        /// Returns the number of entities in the table that match the specified predicate.
+        /// Executes: SELECT COUNT(1) FROM [Table] WHERE ...
+        /// </summary>
+        /// <param name="predicate">A LINQ expression to filter entities.</param>
+        /// <returns>The number of matching entities.</returns>
+        public int CountWhere(Expression<Func<TEntity, bool>> predicate)
+        {
+            ArgumentNullException.ThrowIfNull(predicate);
+
+            var visitor = new WhereExpressionVisitor<TEntity>();
+            string whereClause = visitor.Translate(predicate);
+
+            string table = Context.QuoteIdentifier(EntityTable.TableName);
+            string sql = $"SELECT COUNT(1) FROM {table} WHERE {whereClause}";
+
+            using var command = Context.CreateCommand(sql);
+            foreach (var p in visitor.Parameters)
+                command.Parameters.Add(p);
+
+            return Context.ExecuteScalar<int>(command);
+        }
 
         /// <summary>
         /// Inserts a new Entity into the database. If the entity table has a single integer primary key, 
@@ -646,6 +669,82 @@ namespace CrossLite
                 ts?.Rollback();
                 throw;
             }
+        }
+        
+        /// <summary>
+        /// Updates all entities matching the specified predicate directly in the database.
+        /// This executes a single UPDATE statement — no entities are loaded into memory.
+        /// </summary>
+        /// <param name="predicate">A LINQ expression that identifies which entities to update.</param>
+        /// <param name="buildAction">An action to configure the SET clauses via <see cref="UpdateQueryBuilder"/>.</param>
+        /// <returns>The number of rows updated.</returns>
+        public int UpdateWhere(Expression<Func<TEntity, bool>> predicate, Action<UpdateQueryBuilder> buildAction)
+        {
+            ArgumentNullException.ThrowIfNull(predicate);
+            ArgumentNullException.ThrowIfNull(buildAction);
+
+            var visitor = new WhereExpressionVisitor<TEntity>();
+            string whereClause = visitor.Translate(predicate);
+
+            string table = Context.QuoteIdentifier(EntityTable.TableName);
+
+            // Build the SET portion using the builder
+            using var builder = new UpdateQueryBuilder(EntityTable.TableName, Context);
+            buildAction(builder);
+
+            // Build the command (this gives us the parameterized SET clauses)
+            using var command = builder.BuildCommand();
+
+            // The builder produced: UPDATE [Table] SET [col]=@P0, ...
+            // We need to append our WHERE clause
+            command.CommandText = $"{command.CommandText} WHERE {whereClause}";
+
+            // Add the predicate's parameters
+            foreach (var p in visitor.Parameters)
+                command.Parameters.Add(p);
+
+            int affected = command.ExecuteNonQuery();
+
+            if (affected > 0 && Context.UseIdentityMapping)
+            {
+                Context.ClearIdentityMap(typeof(TEntity));
+            }
+
+            return affected;
+        }
+
+        /// <summary>
+        /// Updates all entities matching the specified <see cref="WhereStatement"/> directly in the database.
+        /// This executes a single UPDATE statement — no entities are loaded into memory.
+        /// </summary>
+        /// <param name="statement">The <see cref="WhereStatement"/> that defines the condition.</param>
+        /// <param name="buildAction">An action to configure the SET clauses via <see cref="UpdateQueryBuilder"/>.</param>
+        /// <returns>The number of rows updated.</returns>
+        public int UpdateWhere(WhereStatement statement, Action<UpdateQueryBuilder> buildAction)
+        {
+            ArgumentNullException.ThrowIfNull(statement);
+            ArgumentNullException.ThrowIfNull(buildAction);
+
+            string whereClause = statement.BuildStatement(out var whereParams);
+
+            using var builder = new UpdateQueryBuilder(EntityTable.TableName, Context);
+            buildAction(builder);
+
+            using var command = builder.BuildCommand();
+
+            command.CommandText = $"{command.CommandText} WHERE {whereClause}";
+
+            foreach (var p in whereParams)
+                command.Parameters.Add(p);
+
+            int affected = command.ExecuteNonQuery();
+
+            if (affected > 0 && Context.UseIdentityMapping)
+            {
+                Context.ClearIdentityMap(typeof(TEntity));
+            }
+
+            return affected;
         }
 
         /// <summary>

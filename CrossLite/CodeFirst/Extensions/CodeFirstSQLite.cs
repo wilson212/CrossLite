@@ -212,7 +212,7 @@ namespace CrossLite.CodeFirst
 
                 // Begin
                 sql.AppendIf(column.IsUnique, "CREATE UNIQUE INDEX ", "CREATE INDEX ");
-                sql.Append($"idx_{table.TableName}_{column.ColumnName}");
+                sql.AppendIf(String.IsNullOrEmpty(column.IndexName), $"idx_{table.TableName}_{column.ColumnName}" , context.QuoteIdentifier(column.IndexName));
                 sql.Append($" ON {context.QuoteIdentifier(table.TableName)}(");
                 sql.Append(context.QuoteIdentifier(column.ColumnName));
                 sql.Append(')');
@@ -441,7 +441,9 @@ namespace CrossLite.CodeFirst
             // 3. Check and Create Single-Column Indexes
             foreach (var colData in table.DatabaseColumns.Values.Where(c => c.IsIndexed))
             {
-                string expectedName = $"idx_{table.TableName}_{colData.ColumnName}";
+                string expectedName = string.IsNullOrEmpty(colData.IndexName)
+                    ? $"idx_{table.TableName}_{colData.ColumnName}"
+                    : colData.IndexName;
 
                 if (!existingIndexes.Contains(expectedName))
                 {

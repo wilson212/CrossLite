@@ -276,7 +276,11 @@ namespace CrossLite
                         }
                         else if (attrType == typeof(IndexAttribute))
                         {
+                            var indexAttr = (IndexAttribute)attr;
                             info.IsIndexed = true;
+                            info.IndexName = indexAttr.Name;
+                            if (indexAttr.Unique)
+                                info.IsUnique = true;
                         }
                         else if (attrType == typeof(AutoIncrementAttribute))
                         {

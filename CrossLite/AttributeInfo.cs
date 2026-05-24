@@ -41,6 +41,12 @@ namespace CrossLite
         public bool IsIndexed { get; internal set; } = false;
 
         /// <summary>
+        /// Gets the name of the index associated with the database column if the column is indexed.
+        /// </summary>
+        /// <remarks>Ignored unless IsIndexed is true</remarks>
+        public string IndexName { get; internal set; }
+
+        /// <summary>
         /// Gets the default value for this attribute
         /// </summary>
         public DefaultAttribute DefaultValue { get; internal set; } = null;
