@@ -9,6 +9,7 @@ using System.Data;
 using System.Data.Common;
 using System.Globalization;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
 using System.Threading;
@@ -74,25 +75,19 @@ namespace CrossLite
         private static readonly ProxyGenerator Generator = new ProxyGenerator();
 
         /// <summary>
-        /// 
+        /// Gets or sets a value indicating whether the identity mapping feature is enabled.
+        /// When enabled, the system ensures that entities with the same primary key are
+        /// represented by a single shared instance within the context, improving memory
+        /// efficiency and ensuring consistency of object references.
         /// </summary>
         public bool UseIdentityMapping { get; set; } = true;
-        
-        /// <summary>
-        /// 
-        /// </summary>
-        internal Dictionary<Type, Dictionary<EntityKey, EntityBase>> EntityIdentityMap { get; } = [];
-        
-        /// <summary>
-        /// The ambient SQLiteContext for the current async/thread flow.
-        /// Used by ChildDbSet to automatically resolve the active transactional context.
-        /// </summary>
-        private static readonly AsyncLocal<SQLiteContext> _ambient = new();
 
         /// <summary>
-        /// Gets the current ambient SQLiteContext, if one has been set via <see cref="BeginTransaction"/>.
+        /// Represents an internal mapping of entity types and their identity keys to their corresponding
+        /// tracked entity instances within the current context. This map is used to manage entity
+        /// state and ensure that each entity instance is uniquely tracked within the context.
         /// </summary>
-        public static SQLiteContext Ambient => _ambient.Value;
+        internal Dictionary<Type, Dictionary<EntityKey, EntityBase>> EntityIdentityMap { get; } = [];
 
         /// <summary>
         /// Creates a new connection to an SQLite Database
@@ -198,6 +193,68 @@ namespace CrossLite
                 typeMap.Clear();
             }
         }
+        
+        /// <summary>
+        /// Attempts to retrieve an entity from the identity map without querying the database.
+        /// </summary>
+        /// <typeparam name="TEntity">The entity type.</typeparam>
+        /// <param name="keyValues">The primary key values.</param>
+        /// <param name="entity">The cached entity, if found.</param>
+        /// <returns>True if the entity was found in the identity map; otherwise, false.</returns>
+        public bool TryGetCached<TEntity>(object[] keyValues, out TEntity entity) where TEntity : EntityBase, new()
+        {
+            entity = null;
+
+            if (!UseIdentityMapping)
+                return false;
+
+            var table = TableCache.GetTableMap(typeof(TEntity));
+            if (table.PrimaryKeys.Count == 0)
+                return false;
+
+            // Pack the identity key
+            var pkValue = PackIdentityKey(table, keyValues);
+            var typeKey = typeof(TEntity);
+
+            // Check the identity map
+            if (EntityIdentityMap.TryGetValue(typeKey, out var typeMap))
+            {
+                if (typeMap.TryGetValue(pkValue, out var existing))
+                {
+                    entity = (TEntity)existing;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        
+        /// <summary>
+        /// Pre-warms the EntityIdentityMap with all rows from the specified table.
+        /// This method must be called within an active database context (inside a 'using' block).
+        /// </summary>
+        /// <remarks>
+        /// Preloading populates the identity map so subsequent navigation property accesses
+        /// hit the cache instead of querying the database. This is useful for reference data
+        /// that doesn't change frequently.
+        /// </remarks>
+        /// <typeparam name="TEntity">The entity type to preload.</typeparam>
+        public void Preload<TEntity>() where TEntity : EntityBase, new()
+        {
+            _ = Select<TEntity>().ToList();
+        }
+
+        /// <summary>
+        /// Pre-warms the EntityIdentityMap with filtered rows from the specified table.
+        /// This method must be called within an active database context (inside a 'using' block).
+        /// </summary>
+        /// <param name="predicate">A LINQ expression to filter which entities to preload.</param>
+        public void Preload<TEntity>(Expression<Func<TEntity, bool>> predicate) 
+            where TEntity : EntityBase, new()
+        {
+            // Force materialization to populate the identity map
+            _ = Select(predicate).ToList();
+        }
 
         #region Connection Management
 
@@ -214,7 +271,7 @@ namespace CrossLite
                 }
                 catch (Exception e)
                 {
-                    throw new DbConnectException("Unable to etablish database connection", e);
+                    throw new DbConnectException("Unable to establish database connection", e);
                 }
             }
         }
@@ -642,6 +699,67 @@ namespace CrossLite
         }
         
         /// <summary>
+        /// Executes a reader and materializes entities of the specified runtime type (for Include processing).
+        /// </summary>
+        internal IEnumerable<EntityBase> ExecuteReader(SqliteCommand command, Type entityType)
+        {
+            var table = TableCache.GetTableMap(entityType);
+            
+            using var reader = command.ExecuteReader();
+            if (reader.HasRows)
+            {
+                var (pkOrdinals, columnMap) = BuildReaderMaps(table, reader, entityType);
+                
+                while (reader.Read())
+                {
+                    yield return ConvertToEntity(table, reader, pkOrdinals, columnMap, entityType);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Builds reader maps for efficient column-to-property mapping (non-generic version).
+        /// </summary>
+        internal (int[] pkOrdinals, AttributeInfo[] columnMap) BuildReaderMaps(
+            TableMapping table, 
+            SqliteDataReader reader, 
+            Type entityType)
+        {
+            int[] pkOrdinals = null;
+            if (UseIdentityMapping && table.PrimaryKeys.Count > 0)
+            {
+                pkOrdinals = new int[table.PrimaryKeys.Count];
+                int idx = 0;
+                foreach (var pk in table.PrimaryKeys)
+                    pkOrdinals[idx++] = reader.GetOrdinal(pk.ColumnName);
+            }
+
+            var columnMap = new AttributeInfo[reader.FieldCount];
+            for (int i = 0; i < reader.FieldCount; i++)
+                columnMap[i] = table.GetAttributeByColumnName(reader.GetName(i));
+
+            return (pkOrdinals, columnMap);
+        }
+
+        /// <summary>
+        /// Converts a data reader row to an entity (non-generic version for reflection scenarios).
+        /// </summary>
+        internal EntityBase ConvertToEntity(
+            TableMapping table, 
+            SqliteDataReader reader, 
+            int[] pkOrdinals, 
+            AttributeInfo[] columnMap,
+            Type entityType)
+        {
+            // Use reflection to call the generic ConvertToEntity<TEntity>
+            var method = typeof(SQLiteContext).GetMethod(nameof(ConvertToEntity), 
+                BindingFlags.Public | BindingFlags.Instance,
+                new[] { typeof(TableMapping), typeof(SqliteDataReader), typeof(int[]), typeof(AttributeInfo[]) });
+            var genericMethod = method.MakeGenericMethod(entityType);
+            return (EntityBase)genericMethod.Invoke(this, new object[] { table, reader, pkOrdinals, columnMap });
+        }
+        
+        /// <summary>
         /// Peforms a SELECT query on the Entity Type, and returns the Enumerator
         /// for the Result set.
         /// </summary>
@@ -697,6 +815,38 @@ namespace CrossLite
                         yield return ConvertToEntity<TEntity>(table, reader, pkOrdinals, columnMap);
                 }
             }
+        }
+        
+        /// <summary>
+        /// Performs a SELECT query with a LINQ predicate filter, returning a queryable
+        /// that supports .Include() for eager loading, .OrderBy(), .Take(), etc.
+        /// </summary>
+        /// <typeparam name="TEntity">The Entity Type</typeparam>
+        /// <param name="predicate">A LINQ expression to filter which entities to select.</param>
+        /// <returns>A deferred DbQuery that supports fluent chaining.</returns>
+        public DbQuery<TEntity> Select<TEntity>(Expression<Func<TEntity, bool>> predicate) 
+            where TEntity : EntityBase, new()
+        {
+            ArgumentNullException.ThrowIfNull(predicate);
+
+            // Use WhereExpressionVisitor to translate the LINQ expression
+            var visitor = new WhereExpressionVisitor<TEntity>();
+            string whereClause = visitor.Translate(predicate);
+
+            // Get table mapping
+            var table = TableCache.GetTableMap(typeof(TEntity));
+
+            // Return a DbQuery (deferred execution)
+            return new DbQuery<TEntity>(this, table, whereClause, visitor.Parameters);
+        }
+        
+        /// <summary>
+        /// Performs a SELECT query returning all entities, with support for .Include() and fluent chaining.
+        /// </summary>
+        public DbQuery<TEntity> SelectQuery<TEntity>() where TEntity : EntityBase, new()
+        {
+            var table = TableCache.GetTableMap(typeof(TEntity));
+            return new DbQuery<TEntity>(this, table, null, Enumerable.Empty<SqliteParameter>());
         }
 
         /// <summary>
@@ -831,11 +981,9 @@ namespace CrossLite
         {
             if (Transaction != null)
                 throw new InvalidOperationException("A transaction is already in progress on this connection.");
-
-            var previous = _ambient.Value;
-            _ambient.Value = this;                          // ← add this
+            
             Transaction = Connection.BeginTransaction();
-            return new TransactionScope(this, previous);    // ← pass previous
+            return new TransactionScope(this);
         }
 
         /// <summary>
@@ -1447,12 +1595,10 @@ namespace CrossLite
         public class TransactionScope : IDisposable
         {
             private readonly SQLiteContext _context;
-            private readonly SQLiteContext _previous;
 
-            internal TransactionScope(SQLiteContext context, SQLiteContext previous)
+            internal TransactionScope(SQLiteContext context)
             {
                 _context = context;
-                _previous = previous;
             }
 
             public void Commit()
@@ -1480,7 +1626,6 @@ namespace CrossLite
                 {
                     _context.RollbackTransaction();
                 }
-                _ambient.Value = _previous;    // ← restore previous ambient
             }
         }
     }

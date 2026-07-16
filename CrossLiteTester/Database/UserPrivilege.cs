@@ -20,7 +20,7 @@ namespace CrossLiteTester
         /// the Account object that this UserPriv references
         /// </summary>
         [ForeignKey(nameof(UserId))]
-        [References(nameof(CrossLiteTester.Account.Id), OnDelete = ReferentialIntegrity.Cascade)]
+        [References(nameof(CrossLiteTester.Account.Id), OnDelete = ReferentialAction.Cascade)]
         public virtual Account Account { get; set; }
 
         /// <summary>
@@ -28,7 +28,7 @@ namespace CrossLiteTester
         /// the Privilege object that this UserPriv references
         /// </summary>
         [ForeignKey(nameof(PrivilegeId))]   
-        [References(nameof(CrossLiteTester.Privilege.Id), OnDelete = ReferentialIntegrity.Cascade)]   
+        [References(nameof(CrossLiteTester.Privilege.Id), OnDelete = ReferentialAction.Cascade)]   
         public virtual Privilege Privilege { get; set; }
     }
 }

@@ -24,11 +24,6 @@ namespace CrossLite.CodeFirst
         protected SQLiteContext Context { get; set; }
 
         /// <summary>
-        /// The SQLite connection string from this Entity
-        /// </summary>
-        protected string ConnectionString { get; set; }
-
-        /// <summary>
         /// The Parent Entity instance that the Child Entities are bound to
         /// </summary>
         protected TParentEntity Entity { get; set; }
@@ -122,7 +117,6 @@ namespace CrossLite.CodeFirst
         {
             Context = context ?? throw new ArgumentNullException(nameof(context));
             Entity = entity ?? throw new ArgumentNullException(nameof(entity));
-            ConnectionString = context.ConnectionString;
 
             // GET INVERSE FOREIGN KEY HERE
             var inverseAttr = parentProperty.GetCustomAttribute<InverseForeignKeyAttribute>();
@@ -136,12 +130,15 @@ namespace CrossLite.CodeFirst
         /// Lazily initializes and retrieves a database context for the current operation, ensuring that necessary table
         /// mappings and foreign key values are loaded.
         /// </summary>
-        /// <remarks>This method ensures that the parent and child table mappings are initialized and that
-        /// foreign key values are loaded if they are not already available. If the database context is not already
-        /// connected,  a new connection is established using the provided connection string.</remarks>
-        /// <param name="wasOpen">A reference parameter that indicates whether the database context was already open.  Set to <see
-        /// langword="true"/> if the context was already connected; otherwise, <see langword="false"/>.</param>
+        /// <remarks>
+        /// This method requires an active database context. If the context is not connected, an InvalidOperationException
+        /// will be thrown. To access child collections outside a 'using' block, keep the context open for the duration
+        /// of your operations.
+        /// </remarks>
+        /// <param name="wasOpen">A reference parameter that indicates whether the database context was already open.
+        /// Set to <see langword="true"/> if the context was already connected; otherwise, <see langword="false"/>.</param>
         /// <returns>An instance of <see cref="SQLiteContext"/> representing the database context to use for the operation.</returns>
+        /// <exception cref="InvalidOperationException">Thrown when the database context is not connected.</exception>
         protected SQLiteContext LazyLoad(ref bool wasOpen)
         {
             // Grab table mappings
@@ -187,34 +184,35 @@ namespace CrossLite.CodeFirst
                 ForeignKeyValues = validGroups.ToArray(); // Now it's a clean array with no nulls
             }
 
-            SQLiteContext context = null;
-            wasOpen = false;
+            // Fail fast if the context is not connected
+            if (Context == null || !Context.IsConnected())
+            {
+                throw new InvalidOperationException(
+                    $"Cannot access child collection '{typeof(TChildEntity).Name}' because the database context is not connected. " +
+                    $"To access child collections outside a 'using' block, keep the context open for the duration of your operations:\n\n" +
+                    $"Example:\n" +
+                    $"  using (var context = new SQLiteContext())\n" +
+                    $"  {{\n" +
+                    $"      var parent = context.Select<{typeof(TParentEntity).Name}>(x => ...).FirstOrDefault();\n" +
+                    $"      \n" +
+                    $"      // Access child collections while context is still open\n" +
+                    $"      foreach (var child in parent.{typeof(TChildEntity).Name}s)\n" +
+                    $"      {{\n" +
+                    $"          // Process child...\n" +
+                    $"      }}\n" +
+                    $"  }}"
+                );
+            }
 
-            // Priority 1: Use the ambient transactional context (Single Global Transaction Context)
-            if (SQLiteContext.Ambient != null && SQLiteContext.Ambient.IsConnected())
-            {
-                wasOpen = true;
-                context = SQLiteContext.Ambient;
-            }
-            // Priority 2: Use the stored context if still connected
-            else if (Context.IsConnected())
-            {
-                wasOpen = true;
-                context = Context;
-            }
-            else
-            {
-                context = new SQLiteContext(ConnectionString);
-                context.Connect();
-            }
+            wasOpen = true;
 
             // Lazy Load the DbSet for the child entity — recreate if context changed
-            if (ChildCollection == null || ChildCollection.Context != context)
+            if (ChildCollection == null || ChildCollection.Context != Context)
             {
-                ChildCollection = new DbSet<TChildEntity>(context);
+                ChildCollection = new DbSet<TChildEntity>(Context);
             }
 
-            return context;
+            return Context;
         }
         
         /// <summary>
@@ -432,7 +430,7 @@ namespace CrossLite.CodeFirst
                 else if (where is SelectWhereStatement sws)
                     query.WhereStatement.MergeFrom(sws);
                 else
-                    throw new ArgumentException(@"Unsupported IWhereStatement implementation.", nameof(where));
+                    throw new ArgumentException("Unsupported IWhereStatement implementation.", nameof(where));
                 
                 // FK scope
                 foreach (var group in ForeignKeyValues)
@@ -643,6 +641,67 @@ namespace CrossLite.CodeFirst
             }
 
             return value;
+        }
+        
+        /// <summary>
+        /// Returns the first child entity matching the predicate, or null if none found.
+        /// </summary>
+        public TChildEntity FirstOrDefault(Expression<Func<TChildEntity, bool>> predicate)
+        {
+            return Where(predicate).FirstOrDefault();
+        }
+        
+        /// <summary>
+        /// Returns the last child entity matching the predicate, or null if none found.
+        /// </summary>
+        public TChildEntity LastOrDefault(Expression<Func<TChildEntity, bool>> predicate)
+        {
+            return Where(predicate).LastOrDefault();
+        }
+        
+        /// <summary>
+        /// Determines whether any child entities match the predicate.
+        /// </summary>
+        public bool Any(Expression<Func<TChildEntity, bool>> predicate)
+        {
+            return Where(predicate).Any();
+        }
+
+        /// <summary>
+        /// Determines whether any child entities exist.
+        /// </summary>
+        public bool Any()
+        {
+            bool wasOpen = false;
+            SQLiteContext context = LazyLoad(ref wasOpen);
+
+            try
+            {
+                var query = new SelectQueryBuilder(context)
+                    .From(ChildTable.TableName)
+                    .SelectCount()
+                    .Take(1);
+
+                foreach (var group in ForeignKeyValues)
+                {
+                    foreach (var kvp in group)
+                        query.Where(kvp.Key, Comparison.Equals, kvp.Value);
+                }
+
+                return query.ExecuteScalar<int>() > 0;
+            }
+            finally
+            {
+                if (!wasOpen) context.Dispose();
+            }
+        }
+        
+        /// <summary>
+        /// Returns the count of child entities matching the predicate.
+        /// </summary>
+        public int CountWhere(Expression<Func<TChildEntity, bool>> predicate)
+        {
+            return Where(predicate).Count();
         }
 
         /// <summary>

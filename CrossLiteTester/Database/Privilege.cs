@@ -7,7 +7,7 @@ namespace CrossLiteTester
     public class Privilege : EntityBase
     {
         [PrimaryKey]
-        [Column(Name: "id")]
+        [Column("id")]
         public virtual int Id { get; set; }
 
         [Column("name"), Required, Unique]

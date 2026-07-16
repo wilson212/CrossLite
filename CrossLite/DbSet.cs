@@ -156,6 +156,22 @@ namespace CrossLite
         {
             return Context.CreateEntity<TEntity>(EntityTable);
         }
+        
+        /// <summary>
+        /// Creates a new instance of the entity, associates it with the current context,
+        /// initializes it using the provided action, and immediately adds it to the database.
+        /// </summary>
+        /// <param name="initializer">An action to configure the entity's properties.</param>
+        /// <returns>A new, initialized, and persisted instance of the entity of type <typeparamref name="TEntity"/>.</returns>
+        public TEntity Create(Action<TEntity> initializer)
+        {
+            ArgumentNullException.ThrowIfNull(initializer);
+    
+            var entity = Context.CreateEntity<TEntity>(EntityTable);
+            initializer(entity);
+            Add(entity);
+            return entity;
+        }
 
         /// <summary>
         /// Builds a local <see cref="PreparedNonQuery"/> for INSERT operations.
@@ -838,6 +854,7 @@ namespace CrossLite
         /// <typeparam name="TKey">The type of the primary key.</typeparam>
         /// <param name="id">The value of the primary key to search for.</param>
         /// <returns>The entity matching the key, or <see langword="null"/> if not found.</returns>
+        /// <remarks>Skips the database query entirely if the entity is already cached.</remarks>
         public TEntity Find<TKey>(TKey id)
         {
             if (EntityTable.PrimaryKeys.Count > 1)
@@ -852,6 +869,12 @@ namespace CrossLite
                     $"The key type '{typeof(TKey).Name}' is not supported. " +
                     "Only primitive types, strings, and Guids can be used as primary keys."
                 );
+            }
+            
+            // Check the identity map FIRST
+            if (Context.TryGetCached<TEntity>([id], out var cached))
+            {
+                return cached;
             }
 
             var primaryKey = EntityTable.PrimaryKeys.First();
@@ -875,16 +898,25 @@ namespace CrossLite
         /// </summary>
         /// <param name="keyValues">An array of primary key values used to locate the entity.</param>
         /// <returns>The entity if found; otherwise, <see langword="null"/>.</returns>
+        /// <remarks>Skips the database query entirely if the entity is already cached.</remarks>
         public TEntity Find(params object[] keyValues)
         {
+            // Ensure that the number of key values matches the number of primary keys
+            if (keyValues.Length != EntityTable.PrimaryKeys.Count)
+                throw new ArgumentException("The number of key values provided does not match the number of primary keys.", nameof(keyValues));
+            
+            // Check the identity map FIRST
+            if (Context.TryGetCached<TEntity>(keyValues, out var cached))
+            {
+                return cached;
+            }
+
+            // Build the SQLite query
             var query = new SelectQueryBuilder(Context)
                 .From(EntityTable.TableName)
                 .SelectAll()
                 .Take(1);
             query.WhereStatement.InnerClauseOperator = LogicOperator.And;
-
-            if (keyValues.Length != EntityTable.PrimaryKeys.Count)
-                throw new ArgumentException(@"The number of key values provided does not match the number of primary keys.", nameof(keyValues));
 
             int i = 0;
             foreach (var attr in EntityTable.PrimaryKeys)
@@ -917,6 +949,67 @@ namespace CrossLite
         }
         
         /// <summary>
+        /// Finds an entity by its complete primary key, specified as a dictionary of property names to values.
+        /// </summary>
+        /// <param name="keyValues">A dictionary mapping primary key property names to their values.</param>
+        /// <returns>The entity if found; otherwise, <see langword="null"/>.</returns>
+        /// <remarks>
+        /// All primary key properties must be provided. The order of keys in the dictionary does not matter.
+        /// Skips the database query entirely if the entity is already cached in the identity map.
+        /// </remarks>
+        public TEntity Find(Dictionary<string, object> keyValues)
+        {
+            if (keyValues == null || keyValues.Count == 0)
+                throw new ArgumentException("At least one key value must be provided.", nameof(keyValues));
+
+            if (keyValues.Count != EntityTable.PrimaryKeys.Count)
+                throw new ArgumentException(
+                    $"Expected {EntityTable.PrimaryKeys.Count} primary key(s), but received {keyValues.Count}.",
+                    nameof(keyValues));
+
+            // Build ordered array for identity map lookup
+            var orderedKeys = new object[EntityTable.PrimaryKeys.Count];
+            int i = 0;
+            foreach (var pk in EntityTable.PrimaryKeys)
+            {
+                if (!keyValues.TryGetValue(pk.Property.Name, out var value))
+                {
+                    throw new ArgumentException(
+                        $"Missing primary key property '{pk.Property.Name}' in the provided dictionary.",
+                        nameof(keyValues));
+                }
+
+                orderedKeys[i++] = value ?? throw new ArgumentNullException(nameof(value), $"Primary key property '{pk.Property.Name}' cannot be null.");
+            }
+
+            // Check identity map first (using ordered keys)
+            if (Context.TryGetCached<TEntity>(orderedKeys, out var cached))
+            {
+                return cached;
+            }
+
+            // Build query
+            var query = new SelectQueryBuilder(Context)
+                .From(EntityTable.TableName)
+                .SelectAll()
+                .Take(1);
+            query.WhereStatement.InnerClauseOperator = LogicOperator.And;
+
+            foreach (var pk in EntityTable.PrimaryKeys)
+            {
+                query.Where(pk.ColumnName, Comparison.Equals, keyValues[pk.Property.Name]);
+            }
+
+            using var command = query.BuildCommand();
+            using var reader = command.ExecuteReader();
+            if (reader.HasRows && reader.Read())
+            {
+                return Context.ConvertToEntity<TEntity>(EntityTable, reader);
+            }
+            return null;
+        }
+        
+        /// <summary>
         /// Finds all entities matching a partial composite key.
         /// The provided key values are matched in order against the entity's primary keys.
         /// </summary>
@@ -925,10 +1018,10 @@ namespace CrossLite
         public IEnumerable<TEntity> FindAll(params object[] keyValues)
         {
             if (keyValues == null || keyValues.Length == 0)
-                throw new ArgumentException(@"At least one key value must be provided.", nameof(keyValues));
+                throw new ArgumentException("At least one key value must be provided.", nameof(keyValues));
 
             if (keyValues.Length > EntityTable.PrimaryKeys.Count)
-                throw new ArgumentException(@"More key values provided than primary keys exist.", nameof(keyValues));
+                throw new ArgumentException("More key values provided than primary keys exist.", nameof(keyValues));
 
             var query = new SelectQueryBuilder(Context)
                 .From(EntityTable.TableName)
@@ -953,6 +1046,55 @@ namespace CrossLite
         }
         
         /// <summary>
+        /// Finds all entities matching a partial or complete primary key, specified as a dictionary.
+        /// </summary>
+        /// <param name="keyValues">A dictionary mapping primary key property names to their values.</param>
+        /// <returns>All matching entities.</returns>
+        /// <remarks>
+        /// Unlike the params overload, this method allows filtering by ANY subset of primary keys,
+        /// not just leading keys in order.
+        /// </remarks>
+        public IEnumerable<TEntity> FindAll(Dictionary<string, object> keyValues)
+        {
+            if (keyValues == null || keyValues.Count == 0)
+                throw new ArgumentException("At least one key value must be provided.", nameof(keyValues));
+
+            if (keyValues.Count > EntityTable.PrimaryKeys.Count)
+                throw new ArgumentException(
+                    $"More key values provided ({keyValues.Count}) than primary keys exist ({EntityTable.PrimaryKeys.Count}).",
+                    nameof(keyValues));
+
+            // Validate that all provided keys are actual primary keys
+            foreach (var kvp in keyValues)
+            {
+                if (!EntityTable.PrimaryKeys.Any(pk => pk.Property.Name == kvp.Key))
+                {
+                    throw new ArgumentException(
+                        $"Property '{kvp.Key}' is not a primary key of {typeof(TEntity).Name}.",
+                        nameof(keyValues));
+                }
+
+                if (kvp.Value == null)
+                    throw new ArgumentNullException(nameof(keyValues), $"Primary key property '{kvp.Key}' cannot be null.");
+            }
+
+            // Build query
+            var query = new SelectQueryBuilder(Context)
+                .From(EntityTable.TableName)
+                .SelectAll();
+            query.WhereStatement.InnerClauseOperator = LogicOperator.And;
+
+            foreach (var kvp in keyValues)
+            {
+                var pk = EntityTable.PrimaryKeys.First(p => p.Property.Name == kvp.Key);
+                query.Where(pk.ColumnName, Comparison.Equals, kvp.Value);
+            }
+
+            var command = query.BuildCommand();
+            return Context.ExecuteReader<TEntity>(command);
+        }
+        
+        /// <summary>
         /// Finds all entities matching the specified <see cref="WhereStatement"/>.
         /// </summary>
         /// <param name="where">The where statement to filter entities by.</param>
@@ -962,7 +1104,7 @@ namespace CrossLite
             ArgumentNullException.ThrowIfNull(where);
 
             if (!where.HasClause)
-                throw new ArgumentException(@"The WhereStatement must contain at least one clause.", nameof(where));
+                throw new ArgumentException("The WhereStatement must contain at least one clause.", nameof(where));
 
             string table = Context.QuoteIdentifier(EntityTable.TableName);
             string sql = $"SELECT * FROM {table} WHERE {where.BuildStatement(out var parameters)}";

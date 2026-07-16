@@ -6,13 +6,15 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
+using CrossLite.CodeFirst;
 
 namespace CrossLite
 {
     /// <summary>
-    /// A deferred, fluent query builder returned by <c>DbSet.Where()</c>.
-    /// No SQL is executed until enumeration (foreach / ToList / etc.).
+    /// Represents a queryable interface for fetching and manipulating entities of the specified type from a SQLite database.
+    /// Provides functionality for filtering, ordering, skipping, taking, and including related entities in the query results.
     /// </summary>
+    /// <typeparam name="TEntity">The type of the entity being queried. Must inherit from <see cref="EntityBase"/> and have a parameterless constructor.</typeparam>
     public class DbQuery<TEntity> : IEnumerable<TEntity> where TEntity : EntityBase, new()
     {
         private readonly SQLiteContext _context;
@@ -24,6 +26,7 @@ namespace CrossLite
         private readonly List<(string Column, bool Descending)> _orderByClauses = new();
         private int? _limit;
         private int? _offset;
+        private readonly List<IncludeNode> _includes = new();
 
         internal DbQuery(SQLiteContext context, TableMapping table,
             string whereClause, IEnumerable<SqliteParameter> parameters)
@@ -83,6 +86,42 @@ namespace CrossLite
         }
         
         /// <summary>
+        /// Eagerly loads a navigation property so it's accessible after the context is disposed of.
+        /// </summary>
+        /// <typeparam name="TProperty">The type of the navigation property.</typeparam>
+        /// <param name="navigationProperty">Expression selecting the navigation property.</param>
+        /// <returns>An IncludableDbQuery that supports .ThenInclude() for nested loading.</returns>
+        public IncludableDbQuery<TEntity, TProperty> Include<TProperty>(
+            Expression<Func<TEntity, TProperty>> navigationProperty)
+            where TProperty : EntityBase
+        {
+            if (navigationProperty.Body is not MemberExpression memberExpr)
+                throw new ArgumentException("Expression must be a simple property access");
+
+            string propertyName = memberExpr.Member.Name;
+
+            // Validate it's a foreign key navigation property
+            if (!_table.FkByChildProperty.TryGetValue(propertyName, out var fkInfo))
+                throw new ArgumentException($"Property '{propertyName}' is not a foreign key navigation property");
+
+            var includeNode = new IncludeNode
+            {
+                PropertyName = propertyName,
+                PropertyType = typeof(TProperty),
+                ForeignKeyInfo = fkInfo
+            };
+
+            _includes.Add(includeNode);
+
+            return new IncludableDbQuery<TEntity, TProperty>(this, includeNode);
+        }
+        
+        internal void AddNestedInclude(IncludeNode parentNode, IncludeNode childNode)
+        {
+            parentNode.NestedIncludes.Add(childNode);
+        }
+        
+        /// <summary>
         /// Projects each entity into a new form, selecting only the specified columns.
         /// Returns a <see cref="DbProjection{TEntity, TResult}"/> that generates
         /// SELECT [col1], [col2] instead of SELECT *.
@@ -119,9 +158,23 @@ namespace CrossLite
         }
 
         /// <summary>
-        /// Materializes the query into a list.
+        /// Materializes the query into a list and eagerly loads all included navigation properties.
         /// </summary>
-        public List<TEntity> ToList() => Execute().ToList();
+        public List<TEntity> ToList()
+        {
+            var entities = Execute().ToList();
+
+            // Process includes if any were specified
+            if (entities.Count > 0 && _includes.Count > 0)
+            {
+                foreach (var include in _includes)
+                {
+                    ProcessInclude(entities, include);
+                }
+            }
+
+            return entities;
+        }
 
         /// <summary>
         /// Determines whether any elements exist in the query result.
@@ -189,6 +242,108 @@ namespace CrossLite
             }
 
             throw new NotSupportedException("OrderBy selector must be a simple property access.");
+        }
+
+        /// <summary>
+        /// Processes a specific include directive, loading related entities based on the foreign key relationships
+        /// defined by the include node. This method retrieves all related entities in a single query and assigns
+        /// them to their respective parent entities, enabling eager loading of the specified navigation property
+        /// in the provided entity list. It also handles nested include directives recursively.
+        /// </summary>
+        /// <typeparam name="TParent">
+        /// The type of the parent entities being processed, which must inherit from the EntityBase class.
+        /// </typeparam>
+        /// <param name="parentEntities">
+        /// The list of parent entities whose navigation property should be populated with related data.
+        /// </param>
+        /// <param name="includeNode">
+        /// The include directive that specifies the navigation property to be populated, including foreign key
+        /// and nested include information.
+        /// </param>
+        private void ProcessInclude<TParent>(List<TParent> parentEntities, IncludeNode includeNode)
+            where TParent : EntityBase
+        {
+            var parentTable = TableCache.GetTableMap(typeof(TParent));
+            var fkInfo = includeNode.ForeignKeyInfo;
+
+            // Collect all foreign key values from parent entities
+            var fkValues = new HashSet<object>();
+            var fkPropertyName = fkInfo.ForeignKey.PropertyNames[0]; // Single-column FK
+            var fkAttribute = parentTable.GetAttributeByPropertyName(fkPropertyName);
+
+            foreach (var entity in parentEntities)
+            {
+                var fkValue = fkAttribute.GetValue(entity);
+                if (fkValue != null)
+                    fkValues.Add(fkValue);
+            }
+
+            if (fkValues.Count == 0)
+                return;
+
+            // Preload all related entities in one query (populates identity map)
+            var childTable = TableCache.GetTableMap(includeNode.PropertyType);
+            var pkPropertyName = fkInfo.Reference.PropertyNames[0];
+            var pkColumnName = childTable.GetAttributeByPropertyName(pkPropertyName).ColumnName;
+
+            // Build IN clause: WHERE Id IN (@p0, @p1, @p2, ...)
+            string inClause = string.Join(", ", fkValues.Select((_, i) => $"@p{i}"));
+            string sql = $"SELECT * FROM {_context.QuoteIdentifier(childTable.TableName)} WHERE {_context.QuoteIdentifier(pkColumnName)} IN ({inClause})";
+
+            var childEntities = new List<EntityBase>();
+
+            using (var command = _context.CreateCommand(sql))
+            {
+                int paramIndex = 0;
+                foreach (var fkValue in fkValues)
+                    command.Parameters.AddWithValue($"@p{paramIndex++}", fkValue);
+
+                // Execute and materialize child entities (populates identity map)
+                childEntities.AddRange(_context.ExecuteReader(command, includeNode.PropertyType));
+            }
+
+            // Trigger lazy-load once per parent to populate the ForeignObjectCache
+            var propertyInfo = typeof(TParent).GetProperty(includeNode.PropertyName);
+            foreach (var entity in parentEntities)
+            {
+                var fkValue = fkAttribute.GetValue(entity);
+                if (fkValue != null)
+                {
+                    // This will hit the identity map (already loaded), not the database
+                    _ = propertyInfo.GetValue(entity);
+                }
+            }
+
+            // Recursively process nested includes
+            if (includeNode.NestedIncludes.Count > 0 && childEntities.Count > 0)
+            {
+                foreach (var nestedInclude in includeNode.NestedIncludes)
+                {
+                    ProcessIncludeGeneric(childEntities, nestedInclude);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Processes include operations for a list of parent entities and their associated include nodes using reflection.
+        /// </summary>
+        /// <param name="parentEntities">The list of parent entities to process includes for.</param>
+        /// <param name="includeNode">The include node containing information about the relationships to include.</param>
+        private void ProcessIncludeGeneric(List<EntityBase> parentEntities, IncludeNode includeNode)
+        {
+            // Use reflection to call ProcessInclude<TParent> with the correct type
+            var method = typeof(DbQuery<TEntity>).GetMethod(nameof(ProcessInclude),
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var genericMethod = method.MakeGenericMethod(parentEntities[0].GetType());
+            genericMethod.Invoke(this, new object[] { parentEntities, includeNode });
+        }
+        
+        internal class IncludeNode
+        {
+            public string PropertyName { get; set; }
+            public Type PropertyType { get; set; }
+            public ForeignKeyConstraint ForeignKeyInfo { get; set; }
+            public List<IncludeNode> NestedIncludes { get; set; } = new();
         }
     }
 }
